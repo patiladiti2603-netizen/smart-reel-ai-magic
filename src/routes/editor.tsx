@@ -25,6 +25,7 @@ export const Route = createFileRoute("/editor")({
 });
 
 type Clip = { name: string; description: string; duration_sec?: number };
+type BrowserFileList = { length: number; item(index: number): File | null; [index: number]: File };
 
 type EditPlan = {
   project: { title: string; category: string; aspect_ratio: string; target_duration_sec: number; language: string };
@@ -59,7 +60,7 @@ function Editor() {
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<EditPlan | null>(null);
 
-  const onFiles = (files: FileList | null) => {
+  const onFiles = (files: BrowserFileList | null) => {
     if (!files) return;
     const next: Clip[] = Array.from(files).map((f) => ({
       name: f.name,
