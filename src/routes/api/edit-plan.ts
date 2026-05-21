@@ -23,14 +23,14 @@ const EditPlanSchema = z.object({
   project: z.object({
     title: z.string(),
     category: z.string(),
-    aspect_ratio: z.enum(["9:16", "16:9", "1:1"]),
+    aspect_ratio: z.string(),
     target_duration_sec: z.number(),
     language: z.string(),
   }),
   style: z.object({
     mood: z.string(),
     color_grade: z.string(),
-    pacing: z.enum(["slow", "medium", "fast", "mixed"]),
+    pacing: z.string(),
     reference_match_notes: z.string(),
   }),
   music: z.object({
@@ -48,7 +48,7 @@ const EditPlanSchema = z.object({
       speed: z.number(),
       effect: z.string(),
       transition_in: z.string(),
-      caption: z.string().nullable(),
+      caption: z.string().nullable().optional(),
     }),
   ),
   text_animations: z.array(
@@ -64,9 +64,9 @@ const EditPlanSchema = z.object({
     style: z.string(),
   }),
   export: z.object({
-    resolution: z.enum(["720p", "1080p", "4K"]),
-    format: z.literal("mp4"),
-    platform: z.enum(["Instagram Reel", "YouTube", "WhatsApp Status"]),
+    resolution: z.string(),
+    format: z.string(),
+    platform: z.string(),
   }),
   notes_for_creator: z.string(),
 });
