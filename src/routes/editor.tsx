@@ -1,5 +1,7 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+"use client";
+
+import { createFileRoute, Link, useHydrated } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import {
   Sparkles,
   Upload,
@@ -50,6 +52,8 @@ const EXAMPLES = [
 ];
 
 function Editor() {
+  const hydrated = useHydrated();
+  const [canUseBrowserUploads, setCanUseBrowserUploads] = useState(false);
   const [category, setCategory] = useState("Wedding");
   const [language, setLanguage] = useState("Marathi");
   const [platform, setPlatform] = useState<(typeof PLATFORMS)[number]>("Instagram Reel");
@@ -60,7 +64,14 @@ function Editor() {
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<EditPlan | null>(null);
 
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setCanUseBrowserUploads(true);
+    }
+  }, []);
+
   const onFiles = (files: BrowserFileList | null) => {
+    if (!canUseBrowserUploads || !hydrated || typeof window === "undefined") return;
     if (!files) return;
     const next: Clip[] = Array.from(files).map((f) => ({
       name: f.name,
@@ -72,6 +83,7 @@ function Editor() {
   const removeClip = (i: number) => setClips((c) => c.filter((_, idx) => idx !== i));
 
   const submit = async () => {
+    if (!hydrated || typeof window === "undefined") return;
     setError(null);
     setPlan(null);
     if (!instructions.trim()) return setError("Add at least one editing instruction.");
