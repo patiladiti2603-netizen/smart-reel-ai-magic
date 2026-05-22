@@ -91,12 +91,54 @@ function Editor() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<EditPlan | null>(null);
+  const [selected, setSelected] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     if (typeof window !== "undefined") {
       setCanUseBrowserUploads(true);
     }
   }, []);
+
+  const toggleOption = (groupKey: string, option: string) => {
+    setSelected((prev) => {
+      const current = prev[groupKey] ?? [];
+      const next = current.includes(option) ? current.filter((o) => o !== option) : [...current, option];
+      const updated = { ...prev, [groupKey]: next };
+      if (groupKey === "style" && !current.includes(option) && RECOMMENDATIONS[option]) {
+        for (const [recGroup, recs] of Object.entries(RECOMMENDATIONS[option]!)) {
+          const existing = updated[recGroup] ?? [];
+          updated[recGroup] = Array.from(new Set([...existing, ...(recs ?? [])]));
+        }
+      }
+      return updated;
+    });
+  };
+
+  const recommended: Record<string, Set<string>> = (() => {
+    const styles = selected.style ?? [];
+    const recs: Record<string, Set<string>> = {};
+    for (const s of styles) {
+      const r = RECOMMENDATIONS[s];
+      if (!r) continue;
+      for (const [g, items] of Object.entries(r)) {
+        recs[g] = recs[g] ?? new Set();
+        for (const it of items ?? []) recs[g].add(it);
+      }
+    }
+    return recs;
+  })();
+
+  const composedInstructions = (() => {
+    const parts: string[] = [];
+    for (const g of OPTION_GROUPS) {
+      const picks = selected[g.key];
+      if (picks && picks.length) parts.push(`${g.title}: ${picks.join(", ")}`);
+    }
+    if (instructions.trim()) parts.push(`Extra notes: ${instructions.trim()}`);
+    return parts.join(". ");
+  })();
+
+  const totalSelected = Object.values(selected).reduce((n, arr) => n + arr.length, 0);
 
   const onFiles = (files: BrowserFileList | null) => {
     if (!canUseBrowserUploads || !hydrated || typeof window === "undefined") return;
@@ -114,14 +156,15 @@ function Editor() {
     if (!hydrated || typeof window === "undefined") return;
     setError(null);
     setPlan(null);
-    if (!instructions.trim()) return setError("Add at least one editing instruction.");
+    const finalInstructions = composedInstructions;
+    if (!finalInstructions.trim()) return setError("Pick at least one option or type an instruction.");
     if (clips.length === 0) return setError("Add at least one clip or photo.");
     setLoading(true);
     try {
       const res = await fetch("/api/edit-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ category, language, platform, instructions, reference, clips }),
+        body: JSON.stringify({ category, language, platform, instructions: finalInstructions, reference, clips }),
       });
       const data = await res.json();
       if (!res.ok) {
