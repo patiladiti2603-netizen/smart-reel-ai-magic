@@ -40,7 +40,7 @@ type EditPlan = {
   notes_for_creator: string;
 };
 
-const CATEGORIES = ["Wedding", "Haldi", "Birthday", "Instagram Reel", "YouTube", "Travel", "Festival", "Vlog"];
+const CATEGORIES = ["Wedding", "Haldi", "Mehendi", "Birthday", "Engagement", "Couple Reel", "Travel", "Party", "College Event", "Family Function", "Baby Shoot", "Gym Reel", "Festival", "Vlog"];
 const PLATFORMS = ["Instagram Reel", "YouTube", "WhatsApp Status"] as const;
 const LANGUAGES = ["Marathi", "Hindi", "English"];
 
@@ -50,6 +50,34 @@ const EXAMPLES = [
   "Slow-mo couple intro with romantic Marathi song",
   "Travel vlog with drone cinematic feel",
 ];
+
+type OptionGroup = { key: string; title: string; options: string[] };
+
+const OPTION_GROUPS: OptionGroup[] = [
+  { key: "style", title: "Reel style", options: ["Cinematic", "Viral Instagram Style", "Emotional", "Romantic", "Slow Motion", "Fast Beat Edit", "Luxury Edit", "Aesthetic Reel", "Trending Reel", "Professional Wedding Film", "YouTube Vlog Style", "Travel Cinematic", "Party Vibe", "Festival Edit"] },
+  { key: "transition", title: "Transitions", options: ["Smooth", "Flash", "Blur", "Zoom", "Shake", "Beat Sync", "Cinematic Fade", "Velocity Edit", "Trending Instagram Transition"] },
+  { key: "color", title: "Color grading", options: ["Golden Glow", "Dark Cinematic", "Warm Tone", "Cool Blue", "Vintage", "Instagram Aesthetic", "Luxury Black Tone", "Vibrant Colors"] },
+  { key: "text", title: "Text style", options: ["Minimal", "Bold Cinematic", "Trending Instagram Font", "Neon Glow", "Elegant Wedding Style", "Luxury Gold Text", "Modern Reel Text"] },
+  { key: "music", title: "Music", options: ["Romantic Marathi Songs", "Trending Hindi Songs", "LoFi", "Emotional Music", "Party Beats", "Cinematic Background Music", "Viral Instagram Audio"] },
+  { key: "pacing", title: "Pacing", options: ["Slow & Emotional", "Fast Viral Cuts", "Balanced Cinematic", "Beat Sync Heavy", "Smooth Reel Flow"] },
+  { key: "effects", title: "Effects", options: ["Motion Blur", "Glow Effect", "Film Grain", "Lens Flare", "Spark Effects", "Bokeh Blur", "Cinematic Lighting", "AI Face Enhance"] },
+];
+
+// Smart recommendations: pick a style → suggest matching transitions/music/pacing/text/color
+const RECOMMENDATIONS: Record<string, Partial<Record<string, string[]>>> = {
+  Cinematic: { transition: ["Cinematic Fade", "Smooth"], color: ["Dark Cinematic", "Warm Tone"], pacing: ["Balanced Cinematic"], music: ["Cinematic Background Music"], text: ["Bold Cinematic"] },
+  "Viral Instagram Style": { transition: ["Trending Instagram Transition", "Beat Sync"], pacing: ["Fast Viral Cuts"], music: ["Viral Instagram Audio"], text: ["Trending Instagram Font"], color: ["Instagram Aesthetic"] },
+  Romantic: { transition: ["Smooth", "Cinematic Fade"], color: ["Golden Glow", "Warm Tone"], pacing: ["Slow & Emotional"], music: ["Romantic Marathi Songs"], text: ["Elegant Wedding Style"] },
+  "Slow Motion": { pacing: ["Slow & Emotional"], effects: ["Motion Blur", "Cinematic Lighting"], transition: ["Smooth"] },
+  "Fast Beat Edit": { transition: ["Beat Sync", "Flash"], pacing: ["Beat Sync Heavy", "Fast Viral Cuts"], music: ["Party Beats"] },
+  "Luxury Edit": { color: ["Luxury Black Tone"], text: ["Luxury Gold Text"], transition: ["Cinematic Fade"], music: ["Cinematic Background Music"] },
+  "Professional Wedding Film": { color: ["Golden Glow"], text: ["Elegant Wedding Style"], pacing: ["Balanced Cinematic"], music: ["Romantic Marathi Songs"], transition: ["Cinematic Fade"] },
+  "Travel Cinematic": { color: ["Vibrant Colors"], effects: ["Lens Flare", "Cinematic Lighting"], pacing: ["Balanced Cinematic"], music: ["Cinematic Background Music"] },
+  "Party Vibe": { transition: ["Flash", "Beat Sync"], music: ["Party Beats"], pacing: ["Fast Viral Cuts"], effects: ["Spark Effects", "Glow Effect"] },
+  "Aesthetic Reel": { color: ["Instagram Aesthetic", "Vintage"], text: ["Minimal"], music: ["LoFi"], pacing: ["Smooth Reel Flow"] },
+  Emotional: { pacing: ["Slow & Emotional"], music: ["Emotional Music"], color: ["Warm Tone"], transition: ["Cinematic Fade"] },
+};
+
 
 function Editor() {
   const hydrated = useHydrated();
@@ -63,12 +91,54 @@ function Editor() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<EditPlan | null>(null);
+  const [selected, setSelected] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     if (typeof window !== "undefined") {
       setCanUseBrowserUploads(true);
     }
   }, []);
+
+  const toggleOption = (groupKey: string, option: string) => {
+    setSelected((prev) => {
+      const current = prev[groupKey] ?? [];
+      const next = current.includes(option) ? current.filter((o) => o !== option) : [...current, option];
+      const updated = { ...prev, [groupKey]: next };
+      if (groupKey === "style" && !current.includes(option) && RECOMMENDATIONS[option]) {
+        for (const [recGroup, recs] of Object.entries(RECOMMENDATIONS[option]!)) {
+          const existing = updated[recGroup] ?? [];
+          updated[recGroup] = Array.from(new Set([...existing, ...(recs ?? [])]));
+        }
+      }
+      return updated;
+    });
+  };
+
+  const recommended: Record<string, Set<string>> = (() => {
+    const styles = selected.style ?? [];
+    const recs: Record<string, Set<string>> = {};
+    for (const s of styles) {
+      const r = RECOMMENDATIONS[s];
+      if (!r) continue;
+      for (const [g, items] of Object.entries(r)) {
+        recs[g] = recs[g] ?? new Set();
+        for (const it of items ?? []) recs[g].add(it);
+      }
+    }
+    return recs;
+  })();
+
+  const composedInstructions = (() => {
+    const parts: string[] = [];
+    for (const g of OPTION_GROUPS) {
+      const picks = selected[g.key];
+      if (picks && picks.length) parts.push(`${g.title}: ${picks.join(", ")}`);
+    }
+    if (instructions.trim()) parts.push(`Extra notes: ${instructions.trim()}`);
+    return parts.join(". ");
+  })();
+
+  const totalSelected = Object.values(selected).reduce((n, arr) => n + arr.length, 0);
 
   const onFiles = (files: BrowserFileList | null) => {
     if (!canUseBrowserUploads || !hydrated || typeof window === "undefined") return;
@@ -86,14 +156,15 @@ function Editor() {
     if (!hydrated || typeof window === "undefined") return;
     setError(null);
     setPlan(null);
-    if (!instructions.trim()) return setError("Add at least one editing instruction.");
+    const finalInstructions = composedInstructions;
+    if (!finalInstructions.trim()) return setError("Pick at least one option or type an instruction.");
     if (clips.length === 0) return setError("Add at least one clip or photo.");
     setLoading(true);
     try {
       const res = await fetch("/api/edit-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ category, language, platform, instructions, reference, clips }),
+        body: JSON.stringify({ category, language, platform, instructions: finalInstructions, reference, clips }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -190,6 +261,62 @@ function Editor() {
               />
             </div>
           </Card>
+
+          {/* AI editing options panel */}
+          <Card>
+            <div className="flex items-center justify-between">
+              <Label icon={Sparkles} title="AI editing options" />
+              <span className="text-[11px] text-white/40">{totalSelected} selected</span>
+            </div>
+            <p className="mt-1 text-xs text-white/50">
+              Tap chips to mix styles. Picking a reel style auto-suggests matching transitions, music & grade.
+            </p>
+            <div className="mt-4 space-y-4">
+              {OPTION_GROUPS.map((g) => {
+                const picks = selected[g.key] ?? [];
+                const recSet = recommended[g.key];
+                return (
+                  <div key={g.key}>
+                    <div className="mb-2 flex items-center gap-2">
+                      <span className="text-xs font-medium text-white/70">{g.title}</span>
+                      {picks.length > 0 && (
+                        <button
+                          onClick={() => setSelected((p) => ({ ...p, [g.key]: [] }))}
+                          className="text-[10px] text-white/40 hover:text-fuchsia-300"
+                        >
+                          clear
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {g.options.map((opt) => {
+                        const active = picks.includes(opt);
+                        const isRec = !active && recSet?.has(opt);
+                        return (
+                          <button
+                            key={opt}
+                            onClick={() => toggleOption(g.key, opt)}
+                            className={
+                              "rounded-full border px-2.5 py-1 text-[11px] transition " +
+                              (active
+                                ? "border-fuchsia-400/60 bg-fuchsia-500/20 text-white"
+                                : isRec
+                                ? "border-fuchsia-400/30 bg-fuchsia-500/5 text-fuchsia-200 hover:bg-fuchsia-500/15"
+                                : "border-white/10 bg-white/[0.03] text-white/60 hover:border-white/20 hover:text-white")
+                            }
+                          >
+                            {isRec && "✦ "}
+                            {opt}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+
 
           {/* instructions */}
           <Card>
