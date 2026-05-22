@@ -40,7 +40,7 @@ type EditPlan = {
   notes_for_creator: string;
 };
 
-const CATEGORIES = ["Wedding", "Haldi", "Birthday", "Instagram Reel", "YouTube", "Travel", "Festival", "Vlog"];
+const CATEGORIES = ["Wedding", "Haldi", "Mehendi", "Birthday", "Engagement", "Couple Reel", "Travel", "Party", "College Event", "Family Function", "Baby Shoot", "Gym Reel", "Festival", "Vlog"];
 const PLATFORMS = ["Instagram Reel", "YouTube", "WhatsApp Status"] as const;
 const LANGUAGES = ["Marathi", "Hindi", "English"];
 
@@ -50,6 +50,34 @@ const EXAMPLES = [
   "Slow-mo couple intro with romantic Marathi song",
   "Travel vlog with drone cinematic feel",
 ];
+
+type OptionGroup = { key: string; title: string; options: string[] };
+
+const OPTION_GROUPS: OptionGroup[] = [
+  { key: "style", title: "Reel style", options: ["Cinematic", "Viral Instagram Style", "Emotional", "Romantic", "Slow Motion", "Fast Beat Edit", "Luxury Edit", "Aesthetic Reel", "Trending Reel", "Professional Wedding Film", "YouTube Vlog Style", "Travel Cinematic", "Party Vibe", "Festival Edit"] },
+  { key: "transition", title: "Transitions", options: ["Smooth", "Flash", "Blur", "Zoom", "Shake", "Beat Sync", "Cinematic Fade", "Velocity Edit", "Trending Instagram Transition"] },
+  { key: "color", title: "Color grading", options: ["Golden Glow", "Dark Cinematic", "Warm Tone", "Cool Blue", "Vintage", "Instagram Aesthetic", "Luxury Black Tone", "Vibrant Colors"] },
+  { key: "text", title: "Text style", options: ["Minimal", "Bold Cinematic", "Trending Instagram Font", "Neon Glow", "Elegant Wedding Style", "Luxury Gold Text", "Modern Reel Text"] },
+  { key: "music", title: "Music", options: ["Romantic Marathi Songs", "Trending Hindi Songs", "LoFi", "Emotional Music", "Party Beats", "Cinematic Background Music", "Viral Instagram Audio"] },
+  { key: "pacing", title: "Pacing", options: ["Slow & Emotional", "Fast Viral Cuts", "Balanced Cinematic", "Beat Sync Heavy", "Smooth Reel Flow"] },
+  { key: "effects", title: "Effects", options: ["Motion Blur", "Glow Effect", "Film Grain", "Lens Flare", "Spark Effects", "Bokeh Blur", "Cinematic Lighting", "AI Face Enhance"] },
+];
+
+// Smart recommendations: pick a style → suggest matching transitions/music/pacing/text/color
+const RECOMMENDATIONS: Record<string, Partial<Record<string, string[]>>> = {
+  Cinematic: { transition: ["Cinematic Fade", "Smooth"], color: ["Dark Cinematic", "Warm Tone"], pacing: ["Balanced Cinematic"], music: ["Cinematic Background Music"], text: ["Bold Cinematic"] },
+  "Viral Instagram Style": { transition: ["Trending Instagram Transition", "Beat Sync"], pacing: ["Fast Viral Cuts"], music: ["Viral Instagram Audio"], text: ["Trending Instagram Font"], color: ["Instagram Aesthetic"] },
+  Romantic: { transition: ["Smooth", "Cinematic Fade"], color: ["Golden Glow", "Warm Tone"], pacing: ["Slow & Emotional"], music: ["Romantic Marathi Songs"], text: ["Elegant Wedding Style"] },
+  "Slow Motion": { pacing: ["Slow & Emotional"], effects: ["Motion Blur", "Cinematic Lighting"], transition: ["Smooth"] },
+  "Fast Beat Edit": { transition: ["Beat Sync", "Flash"], pacing: ["Beat Sync Heavy", "Fast Viral Cuts"], music: ["Party Beats"] },
+  "Luxury Edit": { color: ["Luxury Black Tone"], text: ["Luxury Gold Text"], transition: ["Cinematic Fade"], music: ["Cinematic Background Music"] },
+  "Professional Wedding Film": { color: ["Golden Glow"], text: ["Elegant Wedding Style"], pacing: ["Balanced Cinematic"], music: ["Romantic Marathi Songs"], transition: ["Cinematic Fade"] },
+  "Travel Cinematic": { color: ["Vibrant Colors"], effects: ["Lens Flare", "Cinematic Lighting"], pacing: ["Balanced Cinematic"], music: ["Cinematic Background Music"] },
+  "Party Vibe": { transition: ["Flash", "Beat Sync"], music: ["Party Beats"], pacing: ["Fast Viral Cuts"], effects: ["Spark Effects", "Glow Effect"] },
+  "Aesthetic Reel": { color: ["Instagram Aesthetic", "Vintage"], text: ["Minimal"], music: ["LoFi"], pacing: ["Smooth Reel Flow"] },
+  Emotional: { pacing: ["Slow & Emotional"], music: ["Emotional Music"], color: ["Warm Tone"], transition: ["Cinematic Fade"] },
+};
+
 
 function Editor() {
   const hydrated = useHydrated();
