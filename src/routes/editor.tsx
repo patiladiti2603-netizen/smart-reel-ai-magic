@@ -262,6 +262,62 @@ function Editor() {
             </div>
           </Card>
 
+          {/* AI editing options panel */}
+          <Card>
+            <div className="flex items-center justify-between">
+              <Label icon={Sparkles} title="AI editing options" />
+              <span className="text-[11px] text-white/40">{totalSelected} selected</span>
+            </div>
+            <p className="mt-1 text-xs text-white/50">
+              Tap chips to mix styles. Picking a reel style auto-suggests matching transitions, music & grade.
+            </p>
+            <div className="mt-4 space-y-4">
+              {OPTION_GROUPS.map((g) => {
+                const picks = selected[g.key] ?? [];
+                const recSet = recommended[g.key];
+                return (
+                  <div key={g.key}>
+                    <div className="mb-2 flex items-center gap-2">
+                      <span className="text-xs font-medium text-white/70">{g.title}</span>
+                      {picks.length > 0 && (
+                        <button
+                          onClick={() => setSelected((p) => ({ ...p, [g.key]: [] }))}
+                          className="text-[10px] text-white/40 hover:text-fuchsia-300"
+                        >
+                          clear
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {g.options.map((opt) => {
+                        const active = picks.includes(opt);
+                        const isRec = !active && recSet?.has(opt);
+                        return (
+                          <button
+                            key={opt}
+                            onClick={() => toggleOption(g.key, opt)}
+                            className={
+                              "rounded-full border px-2.5 py-1 text-[11px] transition " +
+                              (active
+                                ? "border-fuchsia-400/60 bg-fuchsia-500/20 text-white"
+                                : isRec
+                                ? "border-fuchsia-400/30 bg-fuchsia-500/5 text-fuchsia-200 hover:bg-fuchsia-500/15"
+                                : "border-white/10 bg-white/[0.03] text-white/60 hover:border-white/20 hover:text-white")
+                            }
+                          >
+                            {isRec && "✦ "}
+                            {opt}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+
+
           {/* instructions */}
           <Card>
             <Label icon={Wand2} title="AI instructions" />
