@@ -1,7 +1,7 @@
 "use client";
 
 import { createFileRoute, Link, useHydrated } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Sparkles,
   Upload,
@@ -13,6 +13,16 @@ import {
   Music2,
   Type,
   Palette,
+  Image as ImageIcon,
+  Play,
+  Pause,
+  Download,
+  Share2,
+  Save,
+  FolderOpen,
+  CheckCircle2,
+  RefreshCw,
+  Maximize2,
 } from "lucide-react";
 import logo from "@/assets/smart-reel-logo.png";
 
@@ -21,12 +31,14 @@ export const Route = createFileRoute("/editor")({
   head: () => ({
     meta: [
       { title: "Smart Reel — AI Editor" },
-      { name: "description", content: "Generate a cinematic edit plan from your clips." },
+      { name: "description", content: "Upload clips, get a cinematic AI edit plan, preview & export your reel." },
     ],
   }),
 });
 
-type Clip = { name: string; description: string; duration_sec?: number };
+type ClipMeta = { name: string; description: string; duration_sec?: number };
+type LocalClip = { id: string; file: File; url: string; kind: "video" | "image"; name: string; duration?: number };
+type ReferenceMedia = { id: string; file: File; url: string; kind: "video" | "image"; name: string } | null;
 type BrowserFileList = { length: number; item(index: number): File | null; [index: number]: File };
 
 type EditPlan = {
@@ -40,6 +52,8 @@ type EditPlan = {
   notes_for_creator: string;
 };
 
+type SavedProject = { id: string; title: string; savedAt: number; category: string; language: string; platform: string; instructions: string; reference: string; selected: Record<string, string[]>; plan: EditPlan | null };
+
 const CATEGORIES = ["Wedding", "Haldi", "Mehendi", "Birthday", "Engagement", "Couple Reel", "Travel", "Party", "College Event", "Family Function", "Baby Shoot", "Gym Reel", "Festival", "Vlog"];
 const PLATFORMS = ["Instagram Reel", "YouTube", "WhatsApp Status"] as const;
 const LANGUAGES = ["Marathi", "Hindi", "English"];
@@ -50,6 +64,26 @@ const EXAMPLES = [
   "Slow-mo couple intro with romantic Marathi song",
   "Travel vlog with drone cinematic feel",
 ];
+
+const AI_TWEAKS = [
+  "More emotional",
+  "More glow",
+  "More transitions",
+  "Faster pace",
+  "Trending Instagram style",
+  "Better cinematic look",
+  "Change song",
+  "Add slow-mo intro",
+];
+
+const EXPORT_FORMATS: Array<{ key: string; label: string; ratio: string }> = [
+  { key: "Instagram Reel", label: "Instagram Reel", ratio: "9:16" },
+  { key: "YouTube", label: "YouTube Video", ratio: "16:9" },
+  { key: "WhatsApp Status", label: "WhatsApp Status", ratio: "9:16" },
+  { key: "Story", label: "Story Format", ratio: "9:16" },
+];
+
+const QUALITIES = ["720p", "1080p", "4K Premium"];
 
 type OptionGroup = { key: string; title: string; options: string[] };
 
@@ -63,7 +97,6 @@ const OPTION_GROUPS: OptionGroup[] = [
   { key: "effects", title: "Effects", options: ["Motion Blur", "Glow Effect", "Film Grain", "Lens Flare", "Spark Effects", "Bokeh Blur", "Cinematic Lighting", "AI Face Enhance"] },
 ];
 
-// Smart recommendations: pick a style → suggest matching transitions/music/pacing/text/color
 const RECOMMENDATIONS: Record<string, Partial<Record<string, string[]>>> = {
   Cinematic: { transition: ["Cinematic Fade", "Smooth"], color: ["Dark Cinematic", "Warm Tone"], pacing: ["Balanced Cinematic"], music: ["Cinematic Background Music"], text: ["Bold Cinematic"] },
   "Viral Instagram Style": { transition: ["Trending Instagram Transition", "Beat Sync"], pacing: ["Fast Viral Cuts"], music: ["Viral Instagram Audio"], text: ["Trending Instagram Font"], color: ["Instagram Aesthetic"] },
@@ -78,25 +111,60 @@ const RECOMMENDATIONS: Record<string, Partial<Record<string, string[]>>> = {
   Emotional: { pacing: ["Slow & Emotional"], music: ["Emotional Music"], color: ["Warm Tone"], transition: ["Cinematic Fade"] },
 };
 
+const PROJECTS_KEY = "smartreel.projects.v1";
+
+const colorGradeFilter = (grade: string): string => {
+  const g = grade.toLowerCase();
+  if (g.includes("golden") || g.includes("warm")) return "sepia(0.25) saturate(1.2) contrast(1.08) brightness(1.05)";
+  if (g.includes("dark") || g.includes("luxury black")) return "contrast(1.2) brightness(0.85) saturate(1.1)";
+  if (g.includes("cool")) return "hue-rotate(-15deg) saturate(1.1) contrast(1.05)";
+  if (g.includes("vintage")) return "sepia(0.4) contrast(0.95) saturate(0.9)";
+  if (g.includes("vibrant")) return "saturate(1.4) contrast(1.1)";
+  if (g.includes("instagram")) return "saturate(1.15) contrast(1.05) brightness(1.03)";
+  return "saturate(1.1) contrast(1.05)";
+};
 
 function Editor() {
   const hydrated = useHydrated();
-  const [canUseBrowserUploads, setCanUseBrowserUploads] = useState(false);
+  const [canUseBrowser, setCanUseBrowser] = useState(false);
+
+  // form
   const [category, setCategory] = useState("Wedding");
   const [language, setLanguage] = useState("Marathi");
   const [platform, setPlatform] = useState<(typeof PLATFORMS)[number]>("Instagram Reel");
   const [instructions, setInstructions] = useState("");
   const [reference, setReference] = useState("");
-  const [clips, setClips] = useState<Clip[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [plan, setPlan] = useState<EditPlan | null>(null);
   const [selected, setSelected] = useState<Record<string, string[]>>({});
 
+  // media
+  const [clips, setClips] = useState<LocalClip[]>([]);
+  const [refVideo, setRefVideo] = useState<ReferenceMedia>(null);
+  const [refPhoto, setRefPhoto] = useState<ReferenceMedia>(null);
+
+  // flow state
+  const [stage, setStage] = useState<"setup" | "planning" | "plan" | "rendering" | "preview">("setup");
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [plan, setPlan] = useState<EditPlan | null>(null);
+  const [tweak, setTweak] = useState("");
+
+  // export
+  const [showExport, setShowExport] = useState(false);
+  const [showSaved, setShowSaved] = useState(false);
+  const [savedToast, setSavedToast] = useState<string | null>(null);
+
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      setCanUseBrowserUploads(true);
-    }
+    if (typeof window !== "undefined") setCanUseBrowser(true);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window === "undefined") return;
+      for (const c of clips) URL.revokeObjectURL(c.url);
+      if (refVideo) URL.revokeObjectURL(refVideo.url);
+      if (refPhoto) URL.revokeObjectURL(refPhoto.url);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleOption = (groupKey: string, option: string) => {
@@ -114,7 +182,7 @@ function Editor() {
     });
   };
 
-  const recommended: Record<string, Set<string>> = (() => {
+  const recommended: Record<string, Set<string>> = useMemo(() => {
     const styles = selected.style ?? [];
     const recs: Record<string, Set<string>> = {};
     for (const s of styles) {
@@ -126,58 +194,214 @@ function Editor() {
       }
     }
     return recs;
-  })();
+  }, [selected]);
 
-  const composedInstructions = (() => {
+  const composedInstructions = useMemo(() => {
     const parts: string[] = [];
     for (const g of OPTION_GROUPS) {
       const picks = selected[g.key];
       if (picks && picks.length) parts.push(`${g.title}: ${picks.join(", ")}`);
     }
     if (instructions.trim()) parts.push(`Extra notes: ${instructions.trim()}`);
+    if (refVideo) parts.push(`Reference reel uploaded: "${refVideo.name}" — match its vibe, pacing, transitions, color grade.`);
+    if (refPhoto) parts.push(`Reference photo uploaded: "${refPhoto.name}" — match its color tone and mood.`);
     return parts.join(". ");
-  })();
+  }, [selected, instructions, refVideo, refPhoto]);
 
   const totalSelected = Object.values(selected).reduce((n, arr) => n + arr.length, 0);
 
-  const onFiles = (files: BrowserFileList | null) => {
-    if (!canUseBrowserUploads || !hydrated || typeof window === "undefined") return;
-    if (!files) return;
-    const next: Clip[] = Array.from(files).map((f) => ({
-      name: f.name,
-      description: f.type.startsWith("video") ? "video clip" : "photo",
-    }));
+  const makeLocalClip = (f: File): LocalClip => {
+    const url = URL.createObjectURL(f);
+    const kind: "video" | "image" = f.type.startsWith("video") ? "video" : "image";
+    return { id: `${f.name}-${f.size}-${Math.random().toString(36).slice(2, 7)}`, file: f, url, kind, name: f.name };
+  };
+
+  const onClipFiles = (files: BrowserFileList | null) => {
+    if (!canUseBrowser || !hydrated || typeof window === "undefined" || !files) return;
+    const next: LocalClip[] = Array.from(files).map(makeLocalClip);
     setClips((prev) => [...prev, ...next]);
   };
 
-  const removeClip = (i: number) => setClips((c) => c.filter((_, idx) => idx !== i));
+  const onReferenceFile = (files: BrowserFileList | null, slot: "video" | "photo") => {
+    if (!canUseBrowser || !hydrated || typeof window === "undefined" || !files || files.length === 0) return;
+    const f = files[0];
+    const url = URL.createObjectURL(f);
+    const kind: "video" | "image" = f.type.startsWith("video") ? "video" : "image";
+    const media = { id: `ref-${slot}`, file: f, url, kind, name: f.name };
+    if (slot === "video") {
+      if (refVideo) URL.revokeObjectURL(refVideo.url);
+      setRefVideo(media);
+    } else {
+      if (refPhoto) URL.revokeObjectURL(refPhoto.url);
+      setRefPhoto(media);
+    }
+  };
 
-  const submit = async () => {
+  const removeClip = (id: string) => {
+    setClips((c) => {
+      const found = c.find((x) => x.id === id);
+      if (found && typeof window !== "undefined") URL.revokeObjectURL(found.url);
+      return c.filter((x) => x.id !== id);
+    });
+  };
+
+  const clipMetas: ClipMeta[] = useMemo(
+    () => clips.map((c) => ({ name: c.name, description: c.kind === "video" ? "video clip" : "photo", duration_sec: c.duration })),
+    [clips],
+  );
+
+  const callAi = async (extraInstruction = "") => {
+    const finalInstructions = extraInstruction ? `${composedInstructions}. ${extraInstruction}` : composedInstructions;
+    if (!finalInstructions.trim()) throw new Error("Pick at least one option or type an instruction.");
+    if (clips.length === 0) throw new Error("Add at least one clip or photo.");
+    const res = await fetch("/api/edit-plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category, language, platform, instructions: finalInstructions, reference, clips: clipMetas }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status === 429) throw new Error("Rate limit reached. Try again in a moment.");
+      if (res.status === 402) throw new Error("AI credits exhausted. Add credits in Settings → Workspace → Usage.");
+      throw new Error(typeof data?.error === "string" ? data.error : "Failed to generate edit plan.");
+    }
+    return data as EditPlan;
+  };
+
+  const generatePlan = async () => {
     if (!hydrated || typeof window === "undefined") return;
     setError(null);
-    setPlan(null);
-    const finalInstructions = composedInstructions;
-    if (!finalInstructions.trim()) return setError("Pick at least one option or type an instruction.");
-    if (clips.length === 0) return setError("Add at least one clip or photo.");
-    setLoading(true);
+    setStage("planning");
     try {
-      const res = await fetch("/api/edit-plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ category, language, platform, instructions: finalInstructions, reference, clips }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        if (res.status === 429) throw new Error("Rate limit reached. Try again in a moment.");
-        if (res.status === 402) throw new Error("AI credits exhausted. Add credits in Settings → Workspace → Usage.");
-        throw new Error(typeof data?.error === "string" ? data.error : "Failed to generate edit plan.");
-      }
-      setPlan(data as EditPlan);
+      const p = await callAi();
+      setPlan(p);
+      setStage("plan");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
-    } finally {
-      setLoading(false);
+      setStage("setup");
     }
+  };
+
+  const startRender = () => {
+    if (!plan) return;
+    setStage("rendering");
+    setProgress(0);
+    const start = Date.now();
+    const target = 4500; // ms
+    const tick = () => {
+      const elapsed = Date.now() - start;
+      const p = Math.min(100, Math.round((elapsed / target) * 100));
+      setProgress(p);
+      if (p < 100) {
+        if (typeof window !== "undefined") window.setTimeout(tick, 80);
+      } else {
+        setStage("preview");
+      }
+    };
+    tick();
+  };
+
+  const applyTweak = async (extra: string) => {
+    if (!extra.trim()) return;
+    setStage("planning");
+    setError(null);
+    try {
+      const p = await callAi(extra);
+      setPlan(p);
+      setTweak("");
+      setStage("rendering");
+      setProgress(0);
+      const start = Date.now();
+      const target = 3000;
+      const tick = () => {
+        const elapsed = Date.now() - start;
+        const pct = Math.min(100, Math.round((elapsed / target) * 100));
+        setProgress(pct);
+        if (pct < 100) {
+          if (typeof window !== "undefined") window.setTimeout(tick, 60);
+        } else {
+          setStage("preview");
+        }
+      };
+      tick();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Tweak failed");
+      setStage("preview");
+    }
+  };
+
+  const downloadPlanJson = () => {
+    if (!plan || typeof window === "undefined") return;
+    const blob = new Blob([JSON.stringify(plan, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = window.document.createElement("a");
+    a.href = url;
+    a.download = `${plan.project.title.replace(/\s+/g, "-").toLowerCase()}-edit-plan.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setSavedToast("Edit plan downloaded");
+    if (typeof window !== "undefined") window.setTimeout(() => setSavedToast(null), 2500);
+  };
+
+  const downloadClip = (clip: LocalClip) => {
+    if (typeof window === "undefined") return;
+    const a = window.document.createElement("a");
+    a.href = clip.url;
+    a.download = clip.name;
+    a.click();
+  };
+
+  const shareTo = (target: "instagram" | "whatsapp" | "youtube") => {
+    if (typeof window === "undefined" || !plan) return;
+    const text = `${plan.project.title} — made with Smart Reel`;
+    const urls: Record<string, string> = {
+      whatsapp: `https://wa.me/?text=${encodeURIComponent(text)}`,
+      instagram: `https://www.instagram.com/`,
+      youtube: `https://studio.youtube.com/`,
+    };
+    window.open(urls[target], "_blank", "noopener,noreferrer");
+  };
+
+  const saveProject = () => {
+    if (typeof window === "undefined") return;
+    const id = `proj-${Date.now()}`;
+    const project: SavedProject = {
+      id,
+      title: plan?.project.title ?? `${category} reel`,
+      savedAt: Date.now(),
+      category, language, platform, instructions, reference, selected, plan,
+    };
+    try {
+      const raw = window.localStorage.getItem(PROJECTS_KEY);
+      const list: SavedProject[] = raw ? JSON.parse(raw) : [];
+      list.unshift(project);
+      window.localStorage.setItem(PROJECTS_KEY, JSON.stringify(list.slice(0, 30)));
+      setSavedToast("Project saved");
+      window.setTimeout(() => setSavedToast(null), 2500);
+    } catch {
+      setSavedToast("Couldn't save project");
+      window.setTimeout(() => setSavedToast(null), 2500);
+    }
+  };
+
+  // auto-save draft when plan changes
+  useEffect(() => {
+    if (typeof window === "undefined" || !plan) return;
+    try {
+      window.localStorage.setItem("smartreel.draft.v1", JSON.stringify({ category, language, platform, instructions, reference, selected, plan, savedAt: Date.now() }));
+    } catch {}
+  }, [plan, category, language, platform, instructions, reference, selected]);
+
+  const loadProject = (p: SavedProject) => {
+    setCategory(p.category);
+    setLanguage(p.language);
+    setPlatform(p.platform as (typeof PLATFORMS)[number]);
+    setInstructions(p.instructions);
+    setReference(p.reference);
+    setSelected(p.selected || {});
+    setPlan(p.plan);
+    setStage(p.plan ? "plan" : "setup");
+    setShowSaved(false);
   };
 
   return (
@@ -197,80 +421,107 @@ function Editor() {
             <img src={logo} alt="" className="h-8 w-8" />
             <span className="text-base font-semibold">Smart Reel</span>
           </Link>
-          <span className="w-12" />
+          <button
+            onClick={() => setShowSaved(true)}
+            className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/70 hover:text-white"
+          >
+            <FolderOpen className="h-3.5 w-3.5" />
+            Projects
+          </button>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-5 py-10 grid gap-8 lg:grid-cols-[1fr_1.1fr]">
-        {/* form */}
-        <section className="space-y-6">
+      <main className="mx-auto max-w-6xl px-5 py-8 grid gap-8 lg:grid-cols-[1fr_1.1fr]">
+        <section className="space-y-5">
           <div>
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">AI Editor</h1>
-            <p className="mt-1 text-sm text-white/60">
-              Add your clips, paste a reference vibe, and Smart Reel will draft the full edit plan.
-            </p>
+            <p className="mt-1 text-sm text-white/60">Upload clips, add a reference, get a cinematic plan, preview & export.</p>
           </div>
 
-          {/* uploads */}
+          {/* clips */}
           <Card>
-            <Label icon={Upload} title="Clips & photos" />
-            <label className="mt-3 flex flex-col items-center justify-center rounded-xl border border-dashed border-white/15 bg-white/[0.02] px-4 py-8 text-center hover:border-fuchsia-400/40 cursor-pointer">
+            <Label icon={Upload} title="Your clips & photos" />
+            <label className="mt-3 flex flex-col items-center justify-center rounded-xl border border-dashed border-white/15 bg-white/[0.02] px-4 py-7 text-center hover:border-fuchsia-400/40 cursor-pointer">
               <Upload className="h-5 w-5 text-white/50" />
               <span className="mt-2 text-sm text-white/70">Tap to add videos or photos</span>
-              <span className="text-xs text-white/40">Files stay in your browser — only names are sent to AI</span>
-              <input
-                type="file"
-                multiple
-                accept="video/*,image/*"
-                className="hidden"
-                onChange={(e) => onFiles(e.target.files)}
-              />
+              <span className="text-xs text-white/40">Stored only in your browser</span>
+              <input type="file" multiple accept="video/*,image/*" className="hidden" onChange={(e) => onClipFiles(e.target.files)} />
             </label>
             {clips.length > 0 && (
-              <ul className="mt-3 space-y-1.5">
-                {clips.map((c, i) => (
-                  <li
-                    key={i}
-                    className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2 text-sm"
-                  >
-                    <span className="truncate text-white/80">{c.name}</span>
+              <ul className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
+                {clips.map((c) => (
+                  <li key={c.id} className="group relative aspect-square overflow-hidden rounded-lg border border-white/10 bg-black/40">
+                    {c.kind === "image" ? (
+                      <img src={c.url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <video src={c.url} className="h-full w-full object-cover" muted playsInline />
+                    )}
                     <button
-                      onClick={() => removeClip(i)}
-                      className="text-white/40 hover:text-fuchsia-400"
+                      onClick={() => removeClip(c.id)}
+                      className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white/80 opacity-0 group-hover:opacity-100"
                       aria-label="Remove"
                     >
-                      <X className="h-4 w-4" />
+                      <X className="h-3 w-3" />
                     </button>
+                    <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 text-[10px] text-white/80">
+                      {c.name}
+                    </span>
                   </li>
                 ))}
               </ul>
             )}
           </Card>
 
-          {/* category / language / platform */}
+          {/* reference media */}
+          <Card>
+            <Label icon={Sparkles} title="Reference media" />
+            <p className="mt-1 text-xs text-white/50">AI analyzes vibe, color grade, pacing, transitions & mood from your references.</p>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <ReferenceSlot
+                kind="video"
+                media={refVideo}
+                onPick={(files) => onReferenceFile(files, "video")}
+                onClear={() => {
+                  if (refVideo && typeof window !== "undefined") URL.revokeObjectURL(refVideo.url);
+                  setRefVideo(null);
+                }}
+              />
+              <ReferenceSlot
+                kind="image"
+                media={refPhoto}
+                onPick={(files) => onReferenceFile(files, "photo")}
+                onClear={() => {
+                  if (refPhoto && typeof window !== "undefined") URL.revokeObjectURL(refPhoto.url);
+                  setRefPhoto(null);
+                }}
+              />
+            </div>
+            <textarea
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              rows={2}
+              placeholder="Or describe the reference vibe: pacing, transitions, color grade, music..."
+              className="mt-3 w-full resize-none rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm placeholder:text-white/30 focus:border-fuchsia-400/50 focus:outline-none"
+            />
+          </Card>
+
+          {/* project */}
           <Card>
             <Label icon={Film} title="Project" />
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <Select label="Category" value={category} onChange={setCategory} options={CATEGORIES} />
               <Select label="Language" value={language} onChange={setLanguage} options={LANGUAGES} />
-              <Select
-                label="Platform"
-                value={platform}
-                onChange={(v) => setPlatform(v as (typeof PLATFORMS)[number])}
-                options={PLATFORMS as unknown as string[]}
-              />
+              <Select label="Platform" value={platform} onChange={(v) => setPlatform(v as (typeof PLATFORMS)[number])} options={PLATFORMS as unknown as string[]} />
             </div>
           </Card>
 
-          {/* AI editing options panel */}
+          {/* options */}
           <Card>
             <div className="flex items-center justify-between">
               <Label icon={Sparkles} title="AI editing options" />
               <span className="text-[11px] text-white/40">{totalSelected} selected</span>
             </div>
-            <p className="mt-1 text-xs text-white/50">
-              Tap chips to mix styles. Picking a reel style auto-suggests matching transitions, music & grade.
-            </p>
+            <p className="mt-1 text-xs text-white/50">Tap chips. Picking a style auto-suggests matching transitions, music & grade.</p>
             <div className="mt-4 space-y-4">
               {OPTION_GROUPS.map((g) => {
                 const picks = selected[g.key] ?? [];
@@ -280,10 +531,7 @@ function Editor() {
                     <div className="mb-2 flex items-center gap-2">
                       <span className="text-xs font-medium text-white/70">{g.title}</span>
                       {picks.length > 0 && (
-                        <button
-                          onClick={() => setSelected((p) => ({ ...p, [g.key]: [] }))}
-                          className="text-[10px] text-white/40 hover:text-fuchsia-300"
-                        >
+                        <button onClick={() => setSelected((p) => ({ ...p, [g.key]: [] }))} className="text-[10px] text-white/40 hover:text-fuchsia-300">
                           clear
                         </button>
                       )}
@@ -317,8 +565,6 @@ function Editor() {
             </div>
           </Card>
 
-
-          {/* instructions */}
           <Card>
             <Label icon={Wand2} title="AI instructions" />
             <textarea
@@ -341,77 +587,100 @@ function Editor() {
             </div>
           </Card>
 
-          {/* reference */}
-          <Card>
-            <Label icon={Sparkles} title="Reference video (optional)" />
-            <textarea
-              value={reference}
-              onChange={(e) => setReference(e.target.value)}
-              rows={2}
-              placeholder="Describe the reference reel's vibe: pacing, transitions, color grade, music..."
-              className="mt-3 w-full resize-none rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm placeholder:text-white/30 focus:border-fuchsia-400/50 focus:outline-none"
-            />
-          </Card>
-
           {error && (
-            <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-              {error}
-            </div>
+            <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>
           )}
 
           <button
-            onClick={submit}
-            disabled={loading}
+            onClick={generatePlan}
+            disabled={stage === "planning" || stage === "rendering"}
             className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-fuchsia-500 to-blue-500 px-6 py-3.5 text-sm font-medium shadow-lg shadow-fuchsia-500/30 disabled:opacity-60"
           >
-            {loading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Cooking your reel...
-              </>
+            {stage === "planning" ? (
+              <><Loader2 className="h-4 w-4 animate-spin" /> Cooking your plan…</>
             ) : (
-              <>
-                <Sparkles className="h-4 w-4" />
-                Generate edit plan
-              </>
+              <><Sparkles className="h-4 w-4" /> Generate edit plan</>
             )}
           </button>
         </section>
 
-        {/* result */}
-        <section className="lg:sticky lg:top-24 lg:self-start">
-          {!plan && !loading && (
-            <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-10 text-center">
-              <div className="mx-auto inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-fuchsia-500/20 to-blue-500/20 ring-1 ring-white/10">
-                <Film className="h-6 w-6 text-fuchsia-300" />
+        {/* right column: plan / render / preview */}
+        <section className="lg:sticky lg:top-24 lg:self-start space-y-4">
+          {stage === "setup" && (
+            <EmptyHint />
+          )}
+
+          {stage === "planning" && <Planning />}
+
+          {stage === "plan" && plan && (
+            <>
+              <PlanView plan={plan} />
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button
+                  onClick={startRender}
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-fuchsia-500 to-blue-500 px-6 py-3.5 text-sm font-medium shadow-lg shadow-fuchsia-500/30"
+                >
+                  <Film className="h-4 w-4" /> Generate Reel
+                </button>
+                <button
+                  onClick={generatePlan}
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-5 py-3 text-sm text-white/80 hover:text-white"
+                >
+                  <RefreshCw className="h-4 w-4" /> Regenerate plan
+                </button>
               </div>
-              <h3 className="mt-5 text-base font-semibold">Your edit plan will appear here</h3>
-              <p className="mt-2 text-sm text-white/50">
-                Timeline, transitions, beat-synced music and captions — all auto-generated.
-              </p>
-            </div>
+            </>
           )}
 
-          {loading && (
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
-              <Loader2 className="mx-auto h-6 w-6 animate-spin text-fuchsia-300" />
-              <p className="mt-4 text-sm text-white/70">Analyzing clips, matching reference, syncing beats...</p>
-            </div>
-          )}
+          {stage === "rendering" && <Rendering progress={progress} />}
 
-          {plan && <PlanView plan={plan} />}
+          {stage === "preview" && plan && (
+            <PreviewScreen
+              plan={plan}
+              clips={clips}
+              onEditAgain={() => setStage("setup")}
+              onTweak={(t) => applyTweak(t)}
+              tweak={tweak}
+              setTweak={setTweak}
+              onExport={() => setShowExport(true)}
+              onSave={saveProject}
+              onDownloadPlan={downloadPlanJson}
+              onDownloadClip={downloadClip}
+            />
+          )}
         </section>
       </main>
+
+      {showExport && plan && (
+        <ExportDialog
+          plan={plan}
+          clips={clips}
+          onClose={() => setShowExport(false)}
+          onDownloadPlan={downloadPlanJson}
+          onDownloadClip={downloadClip}
+          onShare={shareTo}
+          onToast={(m) => {
+            setSavedToast(m);
+            if (typeof window !== "undefined") window.setTimeout(() => setSavedToast(null), 2500);
+          }}
+        />
+      )}
+
+      {showSaved && <ProjectsDialog onClose={() => setShowSaved(false)} onLoad={loadProject} />}
+
+      {savedToast && (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full border border-fuchsia-400/30 bg-[#1a0f2e]/95 px-5 py-2.5 text-sm shadow-xl backdrop-blur-xl">
+          <span className="inline-flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-fuchsia-300" /> {savedToast}</span>
+        </div>
+      )}
     </div>
   );
 }
 
+/* ---------- subcomponents ---------- */
+
 function Card({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-white/[0.01] p-5">
-      {children}
-    </div>
-  );
+  return <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-white/[0.01] p-5">{children}</div>;
 }
 
 function Label({ icon: Icon, title }: { icon: React.ComponentType<{ className?: string }>; title: string }) {
@@ -423,17 +692,7 @@ function Label({ icon: Icon, title }: { icon: React.ComponentType<{ className?: 
   );
 }
 
-function Select({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: string[];
-}) {
+function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: string[] }) {
   return (
     <label className="block">
       <span className="text-xs text-white/50">{label}</span>
@@ -443,12 +702,91 @@ function Select({
         className="mt-1 w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm focus:border-fuchsia-400/50 focus:outline-none"
       >
         {options.map((o) => (
-          <option key={o} value={o} className="bg-[#0e0a1a]">
-            {o}
-          </option>
+          <option key={o} value={o} className="bg-[#0e0a1a]">{o}</option>
         ))}
       </select>
     </label>
+  );
+}
+
+function ReferenceSlot({
+  kind, media, onPick, onClear,
+}: {
+  kind: "video" | "image";
+  media: ReferenceMedia;
+  onPick: (files: BrowserFileList | null) => void;
+  onClear: () => void;
+}) {
+  const title = kind === "video" ? "Reference Reel" : "Reference Photo";
+  const accept = kind === "video" ? "video/*" : "image/*";
+  const Icon = kind === "video" ? Film : ImageIcon;
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]">
+      {media ? (
+        <>
+          {media.kind === "video" ? (
+            <video src={media.url} className="h-32 w-full object-cover" muted playsInline loop autoPlay />
+          ) : (
+            <img src={media.url} alt="" className="h-32 w-full object-cover" />
+          )}
+          <button onClick={onClear} className="absolute right-1.5 top-1.5 rounded-full bg-black/70 p-1 text-white/80" aria-label="Remove reference">
+            <X className="h-3.5 w-3.5" />
+          </button>
+          <div className="truncate px-3 py-2 text-[11px] text-white/70">{title} · {media.name}</div>
+        </>
+      ) : (
+        <label className="flex h-32 cursor-pointer flex-col items-center justify-center gap-1.5 text-center hover:bg-white/[0.04]">
+          <Icon className="h-5 w-5 text-fuchsia-300" />
+          <span className="text-xs font-medium text-white/80">{title}</span>
+          <span className="text-[10px] text-white/40">Tap to upload</span>
+          <input type="file" accept={accept} className="hidden" onChange={(e) => onPick(e.target.files)} />
+        </label>
+      )}
+    </div>
+  );
+}
+
+function EmptyHint() {
+  return (
+    <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-10 text-center">
+      <div className="mx-auto inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-fuchsia-500/20 to-blue-500/20 ring-1 ring-white/10">
+        <Film className="h-6 w-6 text-fuchsia-300" />
+      </div>
+      <h3 className="mt-5 text-base font-semibold">Your edit plan will appear here</h3>
+      <p className="mt-2 text-sm text-white/50">Upload clips → add reference → generate plan → preview & export.</p>
+    </div>
+  );
+}
+
+function Planning() {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
+      <Loader2 className="mx-auto h-6 w-6 animate-spin text-fuchsia-300" />
+      <p className="mt-4 text-sm text-white/70">Analyzing clips, matching reference, syncing beats…</p>
+    </div>
+  );
+}
+
+function Rendering({ progress }: { progress: number }) {
+  const eta = Math.max(1, Math.round(((100 - progress) / 100) * 5));
+  return (
+    <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-fuchsia-500/10 to-blue-500/10 p-8 text-center">
+      <div className="relative mx-auto h-20 w-20">
+        <div className="absolute inset-0 animate-ping rounded-full bg-fuchsia-500/30" />
+        <div className="relative flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br from-fuchsia-500 to-blue-500">
+          <Film className="h-8 w-8 text-white" />
+        </div>
+      </div>
+      <h3 className="mt-5 text-lg font-semibold">Creating Your Cinematic Reel…</h3>
+      <p className="mt-1 text-xs text-white/60">Applying transitions, syncing music, color grading</p>
+      <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/10">
+        <div className="h-full rounded-full bg-gradient-to-r from-fuchsia-500 to-blue-500 transition-all duration-100" style={{ width: `${progress}%` }} />
+      </div>
+      <div className="mt-2 flex justify-between text-xs text-white/50">
+        <span>{progress}%</span>
+        <span>~{eta}s remaining</span>
+      </div>
+    </div>
   );
 }
 
@@ -456,16 +794,14 @@ function PlanView({ plan }: { plan: EditPlan }) {
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-fuchsia-400/20 bg-gradient-to-br from-fuchsia-500/10 to-blue-500/10 p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold">{plan.project.title}</h2>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="truncate text-xl font-semibold">{plan.project.title}</h2>
             <p className="mt-1 text-xs text-white/60">
               {plan.project.category} · {plan.project.aspect_ratio} · {plan.project.target_duration_sec}s · {plan.project.language}
             </p>
           </div>
-          <span className="rounded-full bg-white/10 px-3 py-1 text-[11px]">
-            {plan.export.resolution} · {plan.export.platform}
-          </span>
+          <span className="shrink-0 rounded-full bg-white/10 px-3 py-1 text-[11px]">{plan.export.resolution} · {plan.export.platform}</span>
         </div>
       </div>
 
@@ -473,18 +809,14 @@ function PlanView({ plan }: { plan: EditPlan }) {
         <Row k="Mood" v={plan.style.mood} />
         <Row k="Color grade" v={plan.style.color_grade} />
         <Row k="Pacing" v={plan.style.pacing} />
-        {plan.style.reference_match_notes && (
-          <Row k="Reference notes" v={plan.style.reference_match_notes} />
-        )}
+        {plan.style.reference_match_notes && <Row k="Reference notes" v={plan.style.reference_match_notes} />}
       </Section>
 
       <Section icon={Music2} title={`Music · ${plan.music.bpm_estimate} BPM`}>
         <Row k="Genre" v={plan.music.genre} />
         <div className="mt-2 space-y-1.5">
           {plan.music.song_suggestions.map((s, i) => (
-            <div key={i} className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2 text-sm">
-              {s}
-            </div>
+            <div key={i} className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2 text-sm">{s}</div>
           ))}
         </div>
       </Section>
@@ -494,22 +826,12 @@ function PlanView({ plan }: { plan: EditPlan }) {
           {plan.timeline.map((t) => (
             <div key={t.index} className="rounded-lg border border-white/5 bg-white/[0.03] p-3 text-sm">
               <div className="flex items-center justify-between text-xs text-white/50">
-                <span>#{t.index + 1} · {t.clip_ref}</span>
-                <span>
-                  {t.in_sec.toFixed(1)}s → {t.out_sec.toFixed(1)}s {t.speed !== 1 && `· ${t.speed}x`}
-                </span>
+                <span className="truncate">#{t.index + 1} · {t.clip_ref}</span>
+                <span>{t.in_sec.toFixed(1)}s → {t.out_sec.toFixed(1)}s {t.speed !== 1 && `· ${t.speed}x`}</span>
               </div>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
-                {t.transition_in && (
-                  <span className="rounded-full bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-200">
-                    ↪ {t.transition_in}
-                  </span>
-                )}
-                {t.effect && (
-                  <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[11px] text-blue-200">
-                    {t.effect}
-                  </span>
-                )}
+                {t.transition_in && <span className="rounded-full bg-fuchsia-500/15 px-2 py-0.5 text-[11px] text-fuchsia-200">↪ {t.transition_in}</span>}
+                {t.effect && <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[11px] text-blue-200">{t.effect}</span>}
               </div>
               {t.caption && <p className="mt-2 text-white/80">"{t.caption}"</p>}
             </div>
@@ -539,15 +861,7 @@ function PlanView({ plan }: { plan: EditPlan }) {
   );
 }
 
-function Section({
-  icon: Icon,
-  title,
-  children,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  children: React.ReactNode;
-}) {
+function Section({ icon: Icon, title, children }: { icon: React.ComponentType<{ className?: string }>; title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-white/[0.01] p-5">
       <div className="flex items-center gap-2">
@@ -564,6 +878,428 @@ function Row({ k, v }: { k: string; v: string }) {
     <div className="flex gap-3 text-sm py-1">
       <span className="w-32 shrink-0 text-white/50">{k}</span>
       <span className="text-white/85">{v}</span>
+    </div>
+  );
+}
+
+/* ---------- Preview screen with sequential clip player ---------- */
+
+function PreviewScreen({
+  plan, clips, onEditAgain, onTweak, tweak, setTweak, onExport, onSave, onDownloadPlan, onDownloadClip,
+}: {
+  plan: EditPlan;
+  clips: LocalClip[];
+  onEditAgain: () => void;
+  onTweak: (t: string) => void;
+  tweak: string;
+  setTweak: (s: string) => void;
+  onExport: () => void;
+  onSave: () => void;
+  onDownloadPlan: () => void;
+  onDownloadClip: (c: LocalClip) => void;
+}) {
+  const [cutIdx, setCutIdx] = useState(0);
+  const [playing, setPlaying] = useState(true);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const imageTimerRef = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Match cuts to actual uploaded clips by name (fall back to round-robin)
+  const sequence = useMemo(() => {
+    return plan.timeline.map((t) => {
+      const match = clips.find((c) => c.name === t.clip_ref) ?? clips[t.index % Math.max(1, clips.length)];
+      const cutDuration = Math.max(0.6, t.out_sec - t.in_sec);
+      return { cut: t, clip: match, cutDuration };
+    });
+  }, [plan, clips]);
+
+  const current = sequence[cutIdx];
+  const filter = colorGradeFilter(plan.style.color_grade);
+  const isPortrait = plan.project.aspect_ratio.includes("9:16") || plan.project.aspect_ratio.includes("9/16");
+
+  // active caption / text animation
+  const activeText = useMemo(() => {
+    const t = current?.cut;
+    if (!t) return null;
+    return t.caption || plan.text_animations.find((a) => Math.abs(a.at_sec - (t.in_sec + (t.out_sec - t.in_sec) / 2)) < 1.5)?.text || null;
+  }, [current, plan]);
+
+  const advance = () => {
+    setCutIdx((i) => (i + 1) % Math.max(1, sequence.length));
+  };
+
+  // playback control
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (imageTimerRef.current) {
+      window.clearTimeout(imageTimerRef.current);
+      imageTimerRef.current = null;
+    }
+    if (!current || !current.clip) return;
+
+    if (current.clip.kind === "image") {
+      if (playing) {
+        imageTimerRef.current = window.setTimeout(advance, current.cutDuration * 1000);
+      }
+    } else {
+      const v = videoRef.current;
+      if (v) {
+        try {
+          v.currentTime = Math.min(current.cut.in_sec, Math.max(0, (v.duration || 0) - 0.1));
+        } catch {}
+        if (playing) v.play().catch(() => {});
+      }
+    }
+    return () => {
+      if (typeof window !== "undefined" && imageTimerRef.current) window.clearTimeout(imageTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cutIdx, playing]);
+
+  const onTimeUpdate = () => {
+    const v = videoRef.current;
+    if (!v || !current) return;
+    if (v.currentTime >= current.cut.out_sec || v.currentTime - current.cut.in_sec >= current.cutDuration) {
+      advance();
+    }
+  };
+
+  const togglePlay = () => {
+    setPlaying((p) => {
+      const next = !p;
+      const v = videoRef.current;
+      if (v) {
+        if (next) v.play().catch(() => {});
+        else v.pause();
+      }
+      return next;
+    });
+  };
+
+  const fullscreen = () => {
+    if (typeof window === "undefined") return;
+    const el = containerRef.current;
+    if (!el) return;
+    if (window.document.fullscreenElement) window.document.exitFullscreen?.();
+    else el.requestFullscreen?.();
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold">Preview</h2>
+            <p className="text-xs text-white/50">{plan.timeline.length} cuts · {plan.project.target_duration_sec}s · {plan.project.aspect_ratio}</p>
+          </div>
+          <button onClick={fullscreen} className="rounded-full border border-white/10 bg-white/[0.04] p-2 text-white/70 hover:text-white" aria-label="Fullscreen">
+            <Maximize2 className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div
+          ref={containerRef}
+          className={"relative mx-auto overflow-hidden rounded-xl bg-black " + (isPortrait ? "aspect-[9/16] max-w-[280px]" : "aspect-video w-full")}
+        >
+          {current?.clip ? (
+            current.clip.kind === "video" ? (
+              <video
+                ref={videoRef}
+                key={current.clip.id + cutIdx}
+                src={current.clip.url}
+                className="h-full w-full object-cover"
+                style={{ filter }}
+                muted
+                playsInline
+                onTimeUpdate={onTimeUpdate}
+                onEnded={advance}
+              />
+            ) : (
+              <img src={current.clip.url} alt="" className="h-full w-full object-cover" style={{ filter }} />
+            )
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-white/50">No clips</div>
+          )}
+
+          {activeText && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-8 px-4 text-center">
+              <span className="inline-block rounded-md bg-black/55 px-3 py-1.5 text-sm font-semibold tracking-wide text-white drop-shadow">
+                {activeText}
+              </span>
+            </div>
+          )}
+
+          {current?.cut.transition_in && (
+            <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-fuchsia-500/30 px-2 py-0.5 text-[10px] text-fuchsia-100 backdrop-blur">
+              ↪ {current.cut.transition_in}
+            </span>
+          )}
+
+          <button
+            onClick={togglePlay}
+            className="absolute bottom-2 left-2 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1.5 text-xs text-white backdrop-blur hover:bg-black/80"
+          >
+            {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+            {playing ? "Pause" : "Play"}
+          </button>
+        </div>
+
+        {/* timeline */}
+        <div className="mt-3 flex gap-1 overflow-x-auto">
+          {sequence.map((s, i) => (
+            <button
+              key={i}
+              onClick={() => setCutIdx(i)}
+              className={
+                "h-12 w-16 shrink-0 overflow-hidden rounded-md border " +
+                (i === cutIdx ? "border-fuchsia-400" : "border-white/10 opacity-60 hover:opacity-100")
+              }
+            >
+              {s.clip ? (
+                s.clip.kind === "video" ? (
+                  <video src={s.clip.url} className="h-full w-full object-cover" muted playsInline style={{ filter }} />
+                ) : (
+                  <img src={s.clip.url} alt="" className="h-full w-full object-cover" style={{ filter }} />
+                )
+              ) : null}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* AI tweak */}
+      <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-white/[0.01] p-5">
+        <Label icon={Wand2} title="What would you like to change?" />
+        <div className="mt-3 flex gap-2">
+          <input
+            value={tweak}
+            onChange={(e) => setTweak(e.target.value)}
+            placeholder="e.g. add slow-mo intro, more glow…"
+            className="flex-1 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm placeholder:text-white/30 focus:border-fuchsia-400/50 focus:outline-none"
+          />
+          <button
+            onClick={() => onTweak(tweak)}
+            disabled={!tweak.trim()}
+            className="rounded-lg bg-gradient-to-r from-fuchsia-500 to-blue-500 px-4 text-sm font-medium disabled:opacity-50"
+          >
+            Apply
+          </button>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {AI_TWEAKS.map((s) => (
+            <button
+              key={s}
+              onClick={() => onTweak(s)}
+              className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/60 hover:border-fuchsia-400/40 hover:text-white"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* actions */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <ActionBtn icon={Download} label="Export" onClick={onExport} primary />
+        <ActionBtn icon={Save} label="Save" onClick={onSave} />
+        <ActionBtn icon={RefreshCw} label="Edit again" onClick={onEditAgain} />
+        <ActionBtn icon={Download} label="Plan JSON" onClick={onDownloadPlan} />
+      </div>
+
+      <details className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-sm text-white/70">
+        <summary className="cursor-pointer text-white/80">Download source clips</summary>
+        <div className="mt-2 space-y-1.5">
+          {clips.map((c) => (
+            <button key={c.id} onClick={() => onDownloadClip(c)} className="flex w-full items-center justify-between rounded-md border border-white/5 bg-white/[0.03] px-3 py-2 text-left hover:border-fuchsia-400/40">
+              <span className="truncate">{c.name}</span>
+              <Download className="h-3.5 w-3.5 text-white/50" />
+            </button>
+          ))}
+        </div>
+      </details>
+
+      <p className="px-1 text-[11px] leading-relaxed text-white/40">
+        Note: Smart Reel generates the full cinematic edit plan and previews it in your browser using your source clips. Final encoding to a single MP4 happens in a desktop NLE (Premiere, CapCut, DaVinci) by following the plan, or use the plan JSON with any AI render pipeline.
+      </p>
+    </div>
+  );
+}
+
+function ActionBtn({ icon: Icon, label, onClick, primary }: { icon: React.ComponentType<{ className?: string }>; label: string; onClick: () => void; primary?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      className={
+        "inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-sm font-medium " +
+        (primary
+          ? "bg-gradient-to-r from-fuchsia-500 to-blue-500 shadow-lg shadow-fuchsia-500/30"
+          : "border border-white/10 bg-white/[0.04] text-white/80 hover:text-white")
+      }
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
+  );
+}
+
+/* ---------- Export dialog ---------- */
+
+function ExportDialog({
+  plan, clips, onClose, onDownloadPlan, onDownloadClip, onShare, onToast,
+}: {
+  plan: EditPlan;
+  clips: LocalClip[];
+  onClose: () => void;
+  onDownloadPlan: () => void;
+  onDownloadClip: (c: LocalClip) => void;
+  onShare: (t: "instagram" | "whatsapp" | "youtube") => void;
+  onToast: (m: string) => void;
+}) {
+  const [format, setFormat] = useState(EXPORT_FORMATS[0].key);
+  const [quality, setQuality] = useState("1080p");
+
+  const finish = () => {
+    onDownloadPlan();
+    onToast(`Reel package ready (${format} · ${quality})`);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm sm:items-center">
+      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-[#0e0a1a] p-5">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold">Export & download</h3>
+          <button onClick={onClose} className="rounded-full p-1 text-white/60 hover:text-white"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="mt-4">
+          <p className="text-xs font-medium text-white/60">Format</p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {EXPORT_FORMATS.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => setFormat(f.key)}
+                className={
+                  "rounded-lg border px-3 py-2 text-left text-xs " +
+                  (format === f.key ? "border-fuchsia-400/60 bg-fuchsia-500/15" : "border-white/10 bg-white/[0.03] text-white/70 hover:text-white")
+                }
+              >
+                <div className="font-medium text-white">{f.label}</div>
+                <div className="text-white/50">{f.ratio}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <p className="text-xs font-medium text-white/60">Quality</p>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {QUALITIES.map((q) => (
+              <button
+                key={q}
+                onClick={() => setQuality(q)}
+                className={
+                  "rounded-lg border px-3 py-2 text-xs " +
+                  (quality === q ? "border-fuchsia-400/60 bg-fuchsia-500/15 text-white" : "border-white/10 bg-white/[0.03] text-white/70 hover:text-white")
+                }
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button
+          onClick={finish}
+          className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-fuchsia-500 to-blue-500 px-6 py-3 text-sm font-medium"
+        >
+          <Download className="h-4 w-4" /> Download reel package
+        </button>
+
+        <div className="mt-4">
+          <p className="text-xs font-medium text-white/60">Share</p>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            <ShareBtn label="Instagram" onClick={() => onShare("instagram")} />
+            <ShareBtn label="WhatsApp" onClick={() => onShare("whatsapp")} />
+            <ShareBtn label="YouTube" onClick={() => onShare("youtube")} />
+          </div>
+        </div>
+
+        <details className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] p-3 text-xs text-white/60">
+          <summary className="cursor-pointer text-white/80">Download source clips ({clips.length})</summary>
+          <div className="mt-2 space-y-1">
+            {clips.map((c) => (
+              <button key={c.id} onClick={() => onDownloadClip(c)} className="flex w-full items-center justify-between rounded-md bg-white/[0.03] px-2 py-1.5 hover:bg-white/[0.06]">
+                <span className="truncate">{c.name}</span>
+                <Download className="h-3 w-3" />
+              </button>
+            ))}
+          </div>
+        </details>
+
+        <p className="mt-3 text-[11px] leading-relaxed text-white/40">
+          Smart Reel exports the cinematic edit plan + your source clips. Open the plan in any video editor or render pipeline to produce the final MP4. {plan.timeline.length} cuts ready.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function ShareBtn({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="inline-flex items-center justify-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-2 text-xs text-white/80 hover:text-white">
+      <Share2 className="h-3.5 w-3.5" /> {label}
+    </button>
+  );
+}
+
+/* ---------- Projects dialog ---------- */
+
+function ProjectsDialog({ onClose, onLoad }: { onClose: () => void; onLoad: (p: SavedProject) => void }) {
+  const [list, setList] = useState<SavedProject[]>([]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(PROJECTS_KEY);
+      setList(raw ? JSON.parse(raw) : []);
+    } catch {}
+  }, []);
+
+  const remove = (id: string) => {
+    if (typeof window === "undefined") return;
+    const next = list.filter((p) => p.id !== id);
+    setList(next);
+    window.localStorage.setItem(PROJECTS_KEY, JSON.stringify(next));
+  };
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm sm:items-center">
+      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-[#0e0a1a] p-5">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold">My projects</h3>
+          <button onClick={onClose} className="rounded-full p-1 text-white/60 hover:text-white"><X className="h-4 w-4" /></button>
+        </div>
+        {list.length === 0 ? (
+          <p className="mt-6 text-center text-sm text-white/50">No saved projects yet. Save one from the preview screen.</p>
+        ) : (
+          <ul className="mt-4 max-h-[60vh] space-y-2 overflow-y-auto">
+            {list.map((p) => (
+              <li key={p.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">{p.title}</div>
+                    <div className="text-[11px] text-white/50">{p.category} · {new Date(p.savedAt).toLocaleString()}</div>
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    <button onClick={() => onLoad(p)} className="rounded-md bg-fuchsia-500/20 px-2 py-1 text-xs text-fuchsia-100 hover:bg-fuchsia-500/30">Open</button>
+                    <button onClick={() => remove(p.id)} className="rounded-md bg-white/5 px-2 py-1 text-xs text-white/60 hover:text-white"><X className="h-3 w-3" /></button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
