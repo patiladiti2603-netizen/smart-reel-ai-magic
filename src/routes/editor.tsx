@@ -54,9 +54,20 @@ type EditPlan = {
 
 type SavedProject = { id: string; title: string; savedAt: number; category: string; language: string; platform: string; instructions: string; reference: string; selected: Record<string, string[]>; plan: EditPlan | null };
 
-const CATEGORIES = ["Wedding", "Haldi", "Mehendi", "Birthday", "Engagement", "Couple Reel", "Travel", "Party", "College Event", "Family Function", "Baby Shoot", "Gym Reel", "Festival", "Vlog"];
+const CATEGORIES = ["Instagram Reel", "Wedding", "Haldi", "Mehendi", "Birthday", "Engagement", "Couple Reel", "Travel", "Party", "College Event", "Family Function", "Baby Shoot", "Gym Reel", "Festival", "Vlog"];
 const PLATFORMS = ["Instagram Reel", "YouTube", "WhatsApp Status"] as const;
 const LANGUAGES = ["Marathi", "Hindi", "English"];
+
+const QUALITY_MODES = [
+  { key: "Basic Edit", desc: "Clean simple cuts" },
+  { key: "Cinematic Edit", desc: "Smooth cinematic flow" },
+  { key: "Viral Instagram Reel", desc: "Trending cuts + beat sync" },
+  { key: "Professional Wedding Film", desc: "Golden cinematic film" },
+  { key: "YouTube Cinematic", desc: "16:9 cinematic short" },
+  { key: "Ultra Viral Mode", desc: "Max beat sync, fast cuts, viral hooks" },
+];
+
+const INSTAGRAM_SUBSTYLES = ["Viral Reel Style", "Trending Cinematic Reel", "Beat Sync Reel", "Aesthetic Reel", "Slow Motion Reel", "Couple Reel", "Luxury Reel", "Party Reel", "Travel Reel"];
 
 const EXAMPLES = [
   "Create cinematic Marathi wedding reel with golden grade",
