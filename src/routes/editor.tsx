@@ -54,9 +54,20 @@ type EditPlan = {
 
 type SavedProject = { id: string; title: string; savedAt: number; category: string; language: string; platform: string; instructions: string; reference: string; selected: Record<string, string[]>; plan: EditPlan | null };
 
-const CATEGORIES = ["Wedding", "Haldi", "Mehendi", "Birthday", "Engagement", "Couple Reel", "Travel", "Party", "College Event", "Family Function", "Baby Shoot", "Gym Reel", "Festival", "Vlog"];
+const CATEGORIES = ["Instagram Reel", "Wedding", "Haldi", "Mehendi", "Birthday", "Engagement", "Couple Reel", "Travel", "Party", "College Event", "Family Function", "Baby Shoot", "Gym Reel", "Festival", "Vlog"];
 const PLATFORMS = ["Instagram Reel", "YouTube", "WhatsApp Status"] as const;
 const LANGUAGES = ["Marathi", "Hindi", "English"];
+
+const QUALITY_MODES = [
+  { key: "Basic Edit", desc: "Clean simple cuts" },
+  { key: "Cinematic Edit", desc: "Smooth cinematic flow" },
+  { key: "Viral Instagram Reel", desc: "Trending cuts + beat sync" },
+  { key: "Professional Wedding Film", desc: "Golden cinematic film" },
+  { key: "YouTube Cinematic", desc: "16:9 cinematic short" },
+  { key: "Ultra Viral Mode", desc: "Max beat sync, fast cuts, viral hooks" },
+];
+
+const INSTAGRAM_SUBSTYLES = ["Viral Reel Style", "Trending Cinematic Reel", "Beat Sync Reel", "Aesthetic Reel", "Slow Motion Reel", "Couple Reel", "Luxury Reel", "Party Reel", "Travel Reel"];
 
 const EXAMPLES = [
   "Create cinematic Marathi wedding reel with golden grade",
@@ -135,6 +146,8 @@ function Editor() {
   const [instructions, setInstructions] = useState("");
   const [reference, setReference] = useState("");
   const [selected, setSelected] = useState<Record<string, string[]>>({});
+  const [qualityMode, setQualityMode] = useState<string>("Cinematic Edit");
+  const [instagramSubstyle, setInstagramSubstyle] = useState<string>("Viral Reel Style");
 
   // media
   const [clips, setClips] = useState<LocalClip[]>([]);
@@ -198,6 +211,8 @@ function Editor() {
 
   const composedInstructions = useMemo(() => {
     const parts: string[] = [];
+    parts.push(`Quality mode: ${qualityMode}`);
+    if (category === "Instagram Reel") parts.push(`Instagram reel substyle: ${instagramSubstyle}`);
     for (const g of OPTION_GROUPS) {
       const picks = selected[g.key];
       if (picks && picks.length) parts.push(`${g.title}: ${picks.join(", ")}`);
@@ -205,8 +220,9 @@ function Editor() {
     if (instructions.trim()) parts.push(`Extra notes: ${instructions.trim()}`);
     if (refVideo) parts.push(`Reference reel uploaded: "${refVideo.name}" — match its vibe, pacing, transitions, color grade.`);
     if (refPhoto) parts.push(`Reference photo uploaded: "${refPhoto.name}" — match its color tone and mood.`);
+    parts.push("Sync every transition to the music beat. Detect bass drops and place hero cuts there. Use trending Instagram-style transitions (whip pan, zoom punch, motion blur, flash, velocity edit). Open with a strong viral hook in the first 1.5s. End on an emotional or punchy beat.");
     return parts.join(". ");
-  }, [selected, instructions, refVideo, refPhoto]);
+  }, [selected, instructions, refVideo, refPhoto, qualityMode, category, instagramSubstyle]);
 
   const totalSelected = Object.values(selected).reduce((n, arr) => n + arr.length, 0);
 
@@ -512,8 +528,37 @@ function Editor() {
               <Select label="Category" value={category} onChange={setCategory} options={CATEGORIES} />
               <Select label="Language" value={language} onChange={setLanguage} options={LANGUAGES} />
               <Select label="Platform" value={platform} onChange={(v) => setPlatform(v as (typeof PLATFORMS)[number])} options={PLATFORMS as unknown as string[]} />
+              {category === "Instagram Reel" && (
+                <Select label="Reel substyle" value={instagramSubstyle} onChange={setInstagramSubstyle} options={INSTAGRAM_SUBSTYLES} />
+              )}
+            </div>
+            <div className="mt-4">
+              <div className="mb-2 text-xs font-medium text-white/70">Quality mode</div>
+              <div className="flex flex-wrap gap-1.5">
+                {QUALITY_MODES.map((m) => {
+                  const active = qualityMode === m.key;
+                  return (
+                    <button
+                      key={m.key}
+                      onClick={() => setQualityMode(m.key)}
+                      title={m.desc}
+                      className={
+                        "rounded-full border px-2.5 py-1 text-[11px] transition " +
+                        (active
+                          ? "border-fuchsia-400/60 bg-fuchsia-500/20 text-white"
+                          : "border-white/10 bg-white/[0.03] text-white/60 hover:border-white/20 hover:text-white")
+                      }
+                    >
+                      {m.key === "Ultra Viral Mode" && "🔥 "}
+                      {m.key}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-[11px] text-white/40">{QUALITY_MODES.find((m) => m.key === qualityMode)?.desc}</p>
             </div>
           </Card>
+
 
           {/* options */}
           <Card>
