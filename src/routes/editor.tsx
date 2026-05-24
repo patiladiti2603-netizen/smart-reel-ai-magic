@@ -211,6 +211,8 @@ function Editor() {
 
   const composedInstructions = useMemo(() => {
     const parts: string[] = [];
+    parts.push(`Quality mode: ${qualityMode}`);
+    if (category === "Instagram Reel") parts.push(`Instagram reel substyle: ${instagramSubstyle}`);
     for (const g of OPTION_GROUPS) {
       const picks = selected[g.key];
       if (picks && picks.length) parts.push(`${g.title}: ${picks.join(", ")}`);
@@ -218,8 +220,9 @@ function Editor() {
     if (instructions.trim()) parts.push(`Extra notes: ${instructions.trim()}`);
     if (refVideo) parts.push(`Reference reel uploaded: "${refVideo.name}" — match its vibe, pacing, transitions, color grade.`);
     if (refPhoto) parts.push(`Reference photo uploaded: "${refPhoto.name}" — match its color tone and mood.`);
+    parts.push("Sync every transition to the music beat. Detect bass drops and place hero cuts there. Use trending Instagram-style transitions (whip pan, zoom punch, motion blur, flash, velocity edit). Open with a strong viral hook in the first 1.5s. End on an emotional or punchy beat.");
     return parts.join(". ");
-  }, [selected, instructions, refVideo, refPhoto]);
+  }, [selected, instructions, refVideo, refPhoto, qualityMode, category, instagramSubstyle]);
 
   const totalSelected = Object.values(selected).reduce((n, arr) => n + arr.length, 0);
 
