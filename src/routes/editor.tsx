@@ -146,6 +146,8 @@ function Editor() {
   const [instructions, setInstructions] = useState("");
   const [reference, setReference] = useState("");
   const [selected, setSelected] = useState<Record<string, string[]>>({});
+  const [qualityMode, setQualityMode] = useState<string>("Cinematic Edit");
+  const [instagramSubstyle, setInstagramSubstyle] = useState<string>("Viral Reel Style");
 
   // media
   const [clips, setClips] = useState<LocalClip[]>([]);
