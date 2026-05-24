@@ -528,8 +528,37 @@ function Editor() {
               <Select label="Category" value={category} onChange={setCategory} options={CATEGORIES} />
               <Select label="Language" value={language} onChange={setLanguage} options={LANGUAGES} />
               <Select label="Platform" value={platform} onChange={(v) => setPlatform(v as (typeof PLATFORMS)[number])} options={PLATFORMS as unknown as string[]} />
+              {category === "Instagram Reel" && (
+                <Select label="Reel substyle" value={instagramSubstyle} onChange={setInstagramSubstyle} options={INSTAGRAM_SUBSTYLES} />
+              )}
+            </div>
+            <div className="mt-4">
+              <div className="mb-2 text-xs font-medium text-white/70">Quality mode</div>
+              <div className="flex flex-wrap gap-1.5">
+                {QUALITY_MODES.map((m) => {
+                  const active = qualityMode === m.key;
+                  return (
+                    <button
+                      key={m.key}
+                      onClick={() => setQualityMode(m.key)}
+                      title={m.desc}
+                      className={
+                        "rounded-full border px-2.5 py-1 text-[11px] transition " +
+                        (active
+                          ? "border-fuchsia-400/60 bg-fuchsia-500/20 text-white"
+                          : "border-white/10 bg-white/[0.03] text-white/60 hover:border-white/20 hover:text-white")
+                      }
+                    >
+                      {m.key === "Ultra Viral Mode" && "🔥 "}
+                      {m.key}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-[11px] text-white/40">{QUALITY_MODES.find((m) => m.key === qualityMode)?.desc}</p>
             </div>
           </Card>
+
 
           {/* options */}
           <Card>
