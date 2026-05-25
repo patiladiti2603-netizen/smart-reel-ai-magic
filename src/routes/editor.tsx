@@ -1017,10 +1017,12 @@ function Row({ k, v }: { k: string; v: string }) {
 /* ---------- Preview screen with sequential clip player ---------- */
 
 function PreviewScreen({
-  plan, clips, onEditAgain, onTweak, tweak, setTweak, onExport, onSave, onDownloadPlan, onDownloadClip,
+  plan, clips, song, captionsEnabled, onEditAgain, onTweak, tweak, setTweak, onExport, onSave, onDownloadPlan, onDownloadClip,
 }: {
   plan: EditPlan;
   clips: LocalClip[];
+  song: SongFile;
+  captionsEnabled: boolean;
   onEditAgain: () => void;
   onTweak: (t: string) => void;
   tweak: string;
@@ -1033,6 +1035,7 @@ function PreviewScreen({
   const [cutIdx, setCutIdx] = useState(0);
   const [playing, setPlaying] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const imageTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -1049,12 +1052,25 @@ function PreviewScreen({
   const filter = colorGradeFilter(plan.style.color_grade);
   const isPortrait = plan.project.aspect_ratio.includes("9:16") || plan.project.aspect_ratio.includes("9/16");
 
-  // active caption / text animation
+  // active caption / text animation — only when captions are enabled
   const activeText = useMemo(() => {
+    if (!captionsEnabled) return null;
     const t = current?.cut;
     if (!t) return null;
     return t.caption || plan.text_animations.find((a) => Math.abs(a.at_sec - (t.in_sec + (t.out_sec - t.in_sec) / 2)) < 1.5)?.text || null;
-  }, [current, plan]);
+  }, [current, plan, captionsEnabled]);
+
+  // pick a cinematic CSS animation per cut from transition_in / effect
+  const cinematicAnim = useMemo(() => {
+    const tag = `${current?.cut.transition_in ?? ""} ${current?.cut.effect ?? ""}`.toLowerCase();
+    if (/zoom|punch/.test(tag)) return "sr-zoom-in";
+    if (/whip|swipe|velocity|pan/.test(tag)) return "sr-whip";
+    if (/flash/.test(tag)) return "sr-flash";
+    if (/shake/.test(tag)) return "sr-shake";
+    if (/blur|motion/.test(tag)) return "sr-blur-in";
+    if (/fade|cinemat/.test(tag)) return "sr-fade";
+    return "sr-fade";
+  }, [current]);
 
   const advance = () => {
     setCutIdx((i) => (i + 1) % Math.max(1, sequence.length));
