@@ -39,6 +39,7 @@ export const Route = createFileRoute("/editor")({
 type ClipMeta = { name: string; description: string; duration_sec?: number };
 type LocalClip = { id: string; file: File; url: string; kind: "video" | "image"; name: string; duration?: number };
 type ReferenceMedia = { id: string; file: File; url: string; kind: "video" | "image"; name: string } | null;
+type SongFile = { id: string; file: File; url: string; name: string } | null;
 type BrowserFileList = { length: number; item(index: number): File | null; [index: number]: File };
 
 type EditPlan = {
