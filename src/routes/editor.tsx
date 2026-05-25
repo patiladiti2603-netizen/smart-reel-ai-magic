@@ -1159,9 +1159,21 @@ function PreviewScreen({
           </button>
         </div>
 
+        <style>{`
+@keyframes sr-zoom-in { from { transform: scale(1.18); filter: blur(6px); } to { transform: scale(1); filter: blur(0); } }
+@keyframes sr-whip { from { transform: translateX(20%) skewX(-12deg); filter: blur(8px); opacity: 0; } to { transform: translateX(0) skewX(0); filter: blur(0); opacity: 1; } }
+@keyframes sr-flash { 0% { filter: brightness(3) saturate(0); opacity: 0.2; } 30% { filter: brightness(1); opacity: 1; } 100% { filter: brightness(1); opacity: 1; } }
+@keyframes sr-shake { 0% { transform: translate(0,0); } 20% { transform: translate(-6px,4px); } 40% { transform: translate(5px,-3px); } 60% { transform: translate(-3px,2px); } 100% { transform: translate(0,0); } }
+@keyframes sr-blur-in { from { filter: blur(14px); transform: scale(1.06); } to { filter: blur(0); transform: scale(1); } }
+@keyframes sr-fade { from { opacity: 0; transform: scale(1.04); } to { opacity: 1; transform: scale(1); } }
+.sr-cinematic { animation-duration: 700ms; animation-timing-function: cubic-bezier(.2,.7,.2,1); animation-fill-mode: both; will-change: transform, filter, opacity; }
+.sr-grain::after { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: radial-gradient(rgba(255,255,255,.08) 1px, transparent 1px); background-size: 3px 3px; mix-blend-mode: overlay; opacity: .35; }
+.sr-vignette::before { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 120px 30px rgba(0,0,0,.55); }
+        `}</style>
+
         <div
           ref={containerRef}
-          className={"relative mx-auto overflow-hidden rounded-xl bg-black " + (isPortrait ? "aspect-[9/16] max-w-[280px]" : "aspect-video w-full")}
+          className={"relative mx-auto overflow-hidden rounded-xl bg-black sr-grain sr-vignette " + (isPortrait ? "aspect-[9/16] max-w-[280px]" : "aspect-video w-full")}
         >
           {current?.clip ? (
             current.clip.kind === "video" ? (
@@ -1169,18 +1181,28 @@ function PreviewScreen({
                 ref={videoRef}
                 key={current.clip.id + cutIdx}
                 src={current.clip.url}
-                className="h-full w-full object-cover"
-                style={{ filter }}
+                className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
+                style={{ filter, animationName: cinematicAnim }}
                 muted
                 playsInline
                 onTimeUpdate={onTimeUpdate}
                 onEnded={advance}
               />
             ) : (
-              <img src={current.clip.url} alt="" className="h-full w-full object-cover" style={{ filter }} />
+              <img
+                key={current.clip.id + cutIdx}
+                src={current.clip.url}
+                alt=""
+                className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
+                style={{ filter, animationName: cinematicAnim }}
+              />
             )
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-white/50">No clips</div>
+          )}
+
+          {song && (
+            <audio ref={audioRef} src={song.url} loop autoPlay />
           )}
 
           {activeText && (
