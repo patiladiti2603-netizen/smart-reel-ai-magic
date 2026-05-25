@@ -154,6 +154,12 @@ function Editor() {
   const [clips, setClips] = useState<LocalClip[]>([]);
   const [refVideo, setRefVideo] = useState<ReferenceMedia>(null);
   const [refPhoto, setRefPhoto] = useState<ReferenceMedia>(null);
+  const [song, setSong] = useState<SongFile>(null);
+
+  // captions (optional)
+  const [captionsEnabled, setCaptionsEnabled] = useState(false);
+  const [captionText, setCaptionText] = useState("");
+  const [captionStyle, setCaptionStyle] = useState("Bold Cinematic");
 
   // flow state
   const [stage, setStage] = useState<"setup" | "planning" | "plan" | "rendering" | "preview">("setup");
