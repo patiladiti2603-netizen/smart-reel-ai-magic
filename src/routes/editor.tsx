@@ -1116,13 +1116,27 @@ function PreviewScreen({
     setPlaying((p) => {
       const next = !p;
       const v = videoRef.current;
+      const a = audioRef.current;
       if (v) {
         if (next) v.play().catch(() => {});
         else v.pause();
       }
+      if (a) {
+        if (next) a.play().catch(() => {});
+        else a.pause();
+      }
       return next;
     });
   };
+
+  // start/stop song with the reel
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    a.volume = 0.85;
+    if (playing) a.play().catch(() => {});
+    else a.pause();
+  }, [playing, song]);
 
   const fullscreen = () => {
     if (typeof window === "undefined") return;
