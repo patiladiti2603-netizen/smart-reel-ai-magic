@@ -39,6 +39,7 @@ export const Route = createFileRoute("/editor")({
 type ClipMeta = { name: string; description: string; duration_sec?: number };
 type LocalClip = { id: string; file: File; url: string; kind: "video" | "image"; name: string; duration?: number };
 type ReferenceMedia = { id: string; file: File; url: string; kind: "video" | "image"; name: string } | null;
+type SongFile = { id: string; file: File; url: string; name: string } | null;
 type BrowserFileList = { length: number; item(index: number): File | null; [index: number]: File };
 
 type EditPlan = {
@@ -153,6 +154,12 @@ function Editor() {
   const [clips, setClips] = useState<LocalClip[]>([]);
   const [refVideo, setRefVideo] = useState<ReferenceMedia>(null);
   const [refPhoto, setRefPhoto] = useState<ReferenceMedia>(null);
+  const [song, setSong] = useState<SongFile>(null);
+
+  // captions (optional)
+  const [captionsEnabled, setCaptionsEnabled] = useState(false);
+  const [captionText, setCaptionText] = useState("");
+  const [captionStyle, setCaptionStyle] = useState("Bold Cinematic");
 
   // flow state
   const [stage, setStage] = useState<"setup" | "planning" | "plan" | "rendering" | "preview">("setup");
@@ -176,6 +183,7 @@ function Editor() {
       for (const c of clips) URL.revokeObjectURL(c.url);
       if (refVideo) URL.revokeObjectURL(refVideo.url);
       if (refPhoto) URL.revokeObjectURL(refPhoto.url);
+      if (song) URL.revokeObjectURL(song.url);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -218,11 +226,17 @@ function Editor() {
       if (picks && picks.length) parts.push(`${g.title}: ${picks.join(", ")}`);
     }
     if (instructions.trim()) parts.push(`Extra notes: ${instructions.trim()}`);
-    if (refVideo) parts.push(`Reference reel uploaded: "${refVideo.name}" — match its vibe, pacing, transitions, color grade.`);
+    if (refVideo) parts.push(`Reference reel uploaded: "${refVideo.name}". DEEPLY match its pacing, transition vocabulary, cut frequency, color grade, text animation style and beat-sync feel. Recreate the same cinematic vibe with the user's own clips.`);
     if (refPhoto) parts.push(`Reference photo uploaded: "${refPhoto.name}" — match its color tone and mood.`);
-    parts.push("Sync every transition to the music beat. Detect bass drops and place hero cuts there. Use trending Instagram-style transitions (whip pan, zoom punch, motion blur, flash, velocity edit). Open with a strong viral hook in the first 1.5s. End on an emotional or punchy beat.");
+    if (song) parts.push(`User uploaded ONE song: "${song.name}". Use this exact single track for the ENTIRE reel — do not switch songs. Sync every cut to its beat.`);
+    parts.push("SINGLE SONG ONLY for the whole reel. Sync every cut to the beat of that one song. Use trending Instagram-style transitions (whip pan, zoom punch, motion blur, flash, velocity edit). Open with a strong viral hook in the first 1.5s. End on an emotional or punchy beat.");
+    if (captionsEnabled && captionText.trim()) {
+      parts.push(`Captions ENABLED. Use this exact user-provided caption text, split across hero moments naturally: """${captionText.trim()}""". Caption style: ${captionStyle}.`);
+    } else {
+      parts.push("Captions DISABLED — do NOT generate any captions, text animations or subtitles. Leave caption fields null and text_animations as an empty array.");
+    }
     return parts.join(". ");
-  }, [selected, instructions, refVideo, refPhoto, qualityMode, category, instagramSubstyle]);
+  }, [selected, instructions, refVideo, refPhoto, song, qualityMode, category, instagramSubstyle, captionsEnabled, captionText, captionStyle]);
 
   const totalSelected = Object.values(selected).reduce((n, arr) => n + arr.length, 0);
 
@@ -521,6 +535,78 @@ function Editor() {
             />
           </Card>
 
+          {/* single song */}
+          <Card>
+            <Label icon={Music2} title="Your song (one track for the whole reel)" />
+            <p className="mt-1 text-xs text-white/50">Upload ONE audio file. The AI syncs every cut to its beat. Plays back in preview.</p>
+            {song ? (
+              <div className="mt-3 flex items-center gap-3 rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-3 py-2">
+                <Music2 className="h-4 w-4 text-fuchsia-300" />
+                <span className="flex-1 truncate text-sm text-white/85">{song.name}</span>
+                <audio src={song.url} controls className="h-8 max-w-[160px]" />
+                <button
+                  onClick={() => {
+                    if (song && typeof window !== "undefined") URL.revokeObjectURL(song.url);
+                    setSong(null);
+                  }}
+                  className="rounded-full bg-black/60 p-1.5 text-white/70 hover:text-white"
+                  aria-label="Remove song"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <label className="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-white/15 bg-white/[0.02] px-4 py-5 text-center hover:border-fuchsia-400/40">
+                <Music2 className="h-5 w-5 text-white/50" />
+                <span className="mt-2 text-sm text-white/70">Tap to upload song (mp3, m4a, wav)</span>
+                <input
+                  type="file"
+                  accept="audio/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (!canUseBrowser || typeof window === "undefined") return;
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    setSong((prev) => {
+                      if (prev) URL.revokeObjectURL(prev.url);
+                      return { id: `song-${Date.now()}`, file: f, url: URL.createObjectURL(f), name: f.name };
+                    });
+                  }}
+                />
+              </label>
+            )}
+          </Card>
+
+          {/* captions (optional) */}
+          <Card>
+            <div className="flex items-center justify-between">
+              <Label icon={Type} title="Captions (optional)" />
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-white/70">
+                <input
+                  type="checkbox"
+                  checked={captionsEnabled}
+                  onChange={(e) => setCaptionsEnabled(e.target.checked)}
+                  className="h-4 w-4 accent-fuchsia-500"
+                />
+                {captionsEnabled ? "On" : "Off"}
+              </label>
+            </div>
+            {captionsEnabled ? (
+              <div className="mt-3 space-y-2">
+                <textarea
+                  value={captionText}
+                  onChange={(e) => setCaptionText(e.target.value)}
+                  rows={3}
+                  placeholder="Paste your caption lines. AI will split them across hero moments."
+                  className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm placeholder:text-white/30 focus:border-fuchsia-400/50 focus:outline-none"
+                />
+                <Select label="Caption style" value={captionStyle} onChange={setCaptionStyle} options={["Bold Cinematic", "Trending Instagram Font", "Neon Glow", "Elegant Wedding Style", "Luxury Gold Text", "Minimal"]} />
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-white/40">No captions or text overlays will be added.</p>
+            )}
+          </Card>
+
           {/* project */}
           <Card>
             <Label icon={Film} title="Project" />
@@ -683,6 +769,8 @@ function Editor() {
             <PreviewScreen
               plan={plan}
               clips={clips}
+              song={song}
+              captionsEnabled={captionsEnabled}
               onEditAgain={() => setStage("setup")}
               onTweak={(t) => applyTweak(t)}
               tweak={tweak}
@@ -930,10 +1018,12 @@ function Row({ k, v }: { k: string; v: string }) {
 /* ---------- Preview screen with sequential clip player ---------- */
 
 function PreviewScreen({
-  plan, clips, onEditAgain, onTweak, tweak, setTweak, onExport, onSave, onDownloadPlan, onDownloadClip,
+  plan, clips, song, captionsEnabled, onEditAgain, onTweak, tweak, setTweak, onExport, onSave, onDownloadPlan, onDownloadClip,
 }: {
   plan: EditPlan;
   clips: LocalClip[];
+  song: SongFile;
+  captionsEnabled: boolean;
   onEditAgain: () => void;
   onTweak: (t: string) => void;
   tweak: string;
@@ -946,6 +1036,7 @@ function PreviewScreen({
   const [cutIdx, setCutIdx] = useState(0);
   const [playing, setPlaying] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const imageTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -962,12 +1053,25 @@ function PreviewScreen({
   const filter = colorGradeFilter(plan.style.color_grade);
   const isPortrait = plan.project.aspect_ratio.includes("9:16") || plan.project.aspect_ratio.includes("9/16");
 
-  // active caption / text animation
+  // active caption / text animation — only when captions are enabled
   const activeText = useMemo(() => {
+    if (!captionsEnabled) return null;
     const t = current?.cut;
     if (!t) return null;
     return t.caption || plan.text_animations.find((a) => Math.abs(a.at_sec - (t.in_sec + (t.out_sec - t.in_sec) / 2)) < 1.5)?.text || null;
-  }, [current, plan]);
+  }, [current, plan, captionsEnabled]);
+
+  // pick a cinematic CSS animation per cut from transition_in / effect
+  const cinematicAnim = useMemo(() => {
+    const tag = `${current?.cut.transition_in ?? ""} ${current?.cut.effect ?? ""}`.toLowerCase();
+    if (/zoom|punch/.test(tag)) return "sr-zoom-in";
+    if (/whip|swipe|velocity|pan/.test(tag)) return "sr-whip";
+    if (/flash/.test(tag)) return "sr-flash";
+    if (/shake/.test(tag)) return "sr-shake";
+    if (/blur|motion/.test(tag)) return "sr-blur-in";
+    if (/fade|cinemat/.test(tag)) return "sr-fade";
+    return "sr-fade";
+  }, [current]);
 
   const advance = () => {
     setCutIdx((i) => (i + 1) % Math.max(1, sequence.length));
@@ -1013,13 +1117,27 @@ function PreviewScreen({
     setPlaying((p) => {
       const next = !p;
       const v = videoRef.current;
+      const a = audioRef.current;
       if (v) {
         if (next) v.play().catch(() => {});
         else v.pause();
       }
+      if (a) {
+        if (next) a.play().catch(() => {});
+        else a.pause();
+      }
       return next;
     });
   };
+
+  // start/stop song with the reel
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    a.volume = 0.85;
+    if (playing) a.play().catch(() => {});
+    else a.pause();
+  }, [playing, song]);
 
   const fullscreen = () => {
     if (typeof window === "undefined") return;
@@ -1042,9 +1160,21 @@ function PreviewScreen({
           </button>
         </div>
 
+        <style>{`
+@keyframes sr-zoom-in { from { transform: scale(1.18); filter: blur(6px); } to { transform: scale(1); filter: blur(0); } }
+@keyframes sr-whip { from { transform: translateX(20%) skewX(-12deg); filter: blur(8px); opacity: 0; } to { transform: translateX(0) skewX(0); filter: blur(0); opacity: 1; } }
+@keyframes sr-flash { 0% { filter: brightness(3) saturate(0); opacity: 0.2; } 30% { filter: brightness(1); opacity: 1; } 100% { filter: brightness(1); opacity: 1; } }
+@keyframes sr-shake { 0% { transform: translate(0,0); } 20% { transform: translate(-6px,4px); } 40% { transform: translate(5px,-3px); } 60% { transform: translate(-3px,2px); } 100% { transform: translate(0,0); } }
+@keyframes sr-blur-in { from { filter: blur(14px); transform: scale(1.06); } to { filter: blur(0); transform: scale(1); } }
+@keyframes sr-fade { from { opacity: 0; transform: scale(1.04); } to { opacity: 1; transform: scale(1); } }
+.sr-cinematic { animation-duration: 700ms; animation-timing-function: cubic-bezier(.2,.7,.2,1); animation-fill-mode: both; will-change: transform, filter, opacity; }
+.sr-grain::after { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: radial-gradient(rgba(255,255,255,.08) 1px, transparent 1px); background-size: 3px 3px; mix-blend-mode: overlay; opacity: .35; }
+.sr-vignette::before { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 120px 30px rgba(0,0,0,.55); }
+        `}</style>
+
         <div
           ref={containerRef}
-          className={"relative mx-auto overflow-hidden rounded-xl bg-black " + (isPortrait ? "aspect-[9/16] max-w-[280px]" : "aspect-video w-full")}
+          className={"relative mx-auto overflow-hidden rounded-xl bg-black sr-grain sr-vignette " + (isPortrait ? "aspect-[9/16] max-w-[280px]" : "aspect-video w-full")}
         >
           {current?.clip ? (
             current.clip.kind === "video" ? (
@@ -1052,18 +1182,28 @@ function PreviewScreen({
                 ref={videoRef}
                 key={current.clip.id + cutIdx}
                 src={current.clip.url}
-                className="h-full w-full object-cover"
-                style={{ filter }}
+                className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
+                style={{ filter, animationName: cinematicAnim }}
                 muted
                 playsInline
                 onTimeUpdate={onTimeUpdate}
                 onEnded={advance}
               />
             ) : (
-              <img src={current.clip.url} alt="" className="h-full w-full object-cover" style={{ filter }} />
+              <img
+                key={current.clip.id + cutIdx}
+                src={current.clip.url}
+                alt=""
+                className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
+                style={{ filter, animationName: cinematicAnim }}
+              />
             )
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-white/50">No clips</div>
+          )}
+
+          {song && (
+            <audio ref={audioRef} src={song.url} loop autoPlay />
           )}
 
           {activeText && (
