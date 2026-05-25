@@ -768,6 +768,8 @@ function Editor() {
             <PreviewScreen
               plan={plan}
               clips={clips}
+              song={song}
+              captionsEnabled={captionsEnabled}
               onEditAgain={() => setStage("setup")}
               onTweak={(t) => applyTweak(t)}
               tweak={tweak}
