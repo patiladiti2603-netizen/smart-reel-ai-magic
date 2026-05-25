@@ -566,8 +566,10 @@ function Editor() {
                     if (!canUseBrowser || typeof window === "undefined") return;
                     const f = e.target.files?.[0];
                     if (!f) return;
-                    if (song) URL.revokeObjectURL(song.url);
-                    setSong({ id: `song-${Date.now()}`, file: f, url: URL.createObjectURL(f), name: f.name });
+                    setSong((prev) => {
+                      if (prev) URL.revokeObjectURL(prev.url);
+                      return { id: `song-${Date.now()}`, file: f, url: URL.createObjectURL(f), name: f.name };
+                    });
                   }}
                 />
               </label>
