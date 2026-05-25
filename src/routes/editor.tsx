@@ -183,6 +183,7 @@ function Editor() {
       for (const c of clips) URL.revokeObjectURL(c.url);
       if (refVideo) URL.revokeObjectURL(refVideo.url);
       if (refPhoto) URL.revokeObjectURL(refPhoto.url);
+      if (song) URL.revokeObjectURL(song.url);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
