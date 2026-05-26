@@ -269,15 +269,17 @@ function Editor() {
     if (instructions.trim()) parts.push(`Extra notes: ${instructions.trim()}`);
     if (refVideo) parts.push(`Reference reel uploaded: "${refVideo.name}". DEEPLY match its pacing, transition vocabulary, cut frequency, color grade, text animation style and beat-sync feel. Recreate the same cinematic vibe with the user's own clips.`);
     if (refPhoto) parts.push(`Reference photo uploaded: "${refPhoto.name}" — match its color tone and mood.`);
-    if (song) parts.push(`User uploaded ONE song: "${song.name}". Use this exact single track for the ENTIRE reel — do not switch songs. Sync every cut to its beat.`);
-    parts.push("SINGLE SONG ONLY for the whole reel. Sync every cut to the beat of that one song. Use trending Instagram-style transitions (whip pan, zoom punch, motion blur, flash, velocity edit). Open with a strong viral hook in the first 1.5s. End on an emotional or punchy beat.");
+    if (song) parts.push(`User uploaded ONE song: "${song.name}". Use this exact single track for the ENTIRE reel — do not switch songs. Detect beats, bass drops, emotional timing and sync every cut to this uploaded track.`);
+    else if (selectedSongTitle) parts.push(`Selected AI recommended ONE song: "${selectedSongTitle}". Use this as the single chosen song for the whole reel and sync the full timeline to it.`);
+    else parts.push(`AI must recommend and choose ONE best song from the event category, clip energy, reference style and pacing.`);
+    parts.push("SINGLE SONG ONLY for the whole reel. Add beat_markers and bass_drops. Sync every cut to the beat of that one song. Use cinematic audio timing, volume balancing, fade in/out, bass enhancement, trending Instagram-style transitions (whip pan, zoom punch, motion blur, flash, velocity edit), hook intro editing, emotional pacing and professional storytelling. Open with a strong viral hook in the first 1.5s. End on an emotional or punchy beat.");
     if (captionsEnabled && captionText.trim()) {
       parts.push(`Captions ENABLED. Use this exact user-provided caption text, split across hero moments naturally: """${captionText.trim()}""". Caption style: ${captionStyle}.`);
     } else {
       parts.push("Captions DISABLED — do NOT generate any captions, text animations or subtitles. Leave caption fields null and text_animations as an empty array.");
     }
     return parts.join(". ");
-  }, [selected, instructions, refVideo, refPhoto, song, qualityMode, category, instagramSubstyle, captionsEnabled, captionText, captionStyle]);
+  }, [selected, instructions, refVideo, refPhoto, song, selectedSongTitle, qualityMode, category, instagramSubstyle, captionsEnabled, captionText, captionStyle]);
 
   const totalSelected = Object.values(selected).reduce((n, arr) => n + arr.length, 0);
 
