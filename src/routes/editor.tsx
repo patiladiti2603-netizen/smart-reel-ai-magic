@@ -660,7 +660,24 @@ function Editor() {
                     </div>
                     <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-white/45">
                       <span className="line-clamp-1">{rec.vibe}</span>
-                      <span className="shrink-0">Preview vibe</span>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          previewRecommendedSong(rec);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            previewRecommendedSong(rec);
+                          }
+                        }}
+                        className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-white/65"
+                      >
+                        {songPreviewing === rec.title ? "Playing" : "Preview"}
+                      </span>
                     </div>
                   </button>
                 );
