@@ -130,6 +130,42 @@ OUTPUT RULES:
 - Best/most cinematic clips FIRST in timeline (the hook).
 - Put 1-sentence summary of why the edit will feel trending in notes_for_creator. If captions are disabled, mention it.`;
 
+const normalizePlan = (plan: z.infer<typeof EditPlanSchema>, selectedSong: string): z.infer<typeof EditPlanSchema> => {
+  const targetDuration = Math.max(8, Math.min(plan.project.target_duration_sec || 20, 45));
+  const bpm = Math.max(70, Math.min(plan.music.bpm_estimate || 100, 160));
+  const beatStep = 60 / bpm;
+  const beatMarkers = plan.music.beat_markers?.length
+    ? plan.music.beat_markers
+    : Array.from({ length: Math.min(96, Math.ceil(targetDuration / beatStep) + 1) }, (_, i) => Number((i * beatStep).toFixed(2)));
+  const bassDrops = plan.music.bass_drops?.length
+    ? plan.music.bass_drops
+    : [1.2, targetDuration * 0.35, targetDuration * 0.62, Math.max(2, targetDuration - 1.2)].map((n) => Number(n.toFixed(2)));
+
+  const selected = selectedSong && selectedSong !== "AI choose best single song"
+    ? selectedSong
+    : plan.music.selected_song || plan.music.song_suggestions[0] || "AI-selected cinematic single track";
+
+  return {
+    ...plan,
+    project: { ...plan.project, target_duration_sec: targetDuration },
+    music: {
+      ...plan.music,
+      selected_song: selected,
+      bpm_estimate: bpm,
+      beat_sync: true,
+      beat_markers: beatMarkers.filter((n) => n <= targetDuration + 0.1),
+      bass_drops: bassDrops.filter((n) => n <= targetDuration + 0.1),
+      song_suggestions: Array.from(new Set([selected, ...(plan.music.song_suggestions || [])])).slice(0, 4),
+      audio_mix: plan.music.audio_mix || {
+        volume_balance: "Song at -8 LUFS with clip audio ducked under music for clear, audible cinematic playback",
+        fade_in_sec: 0.6,
+        fade_out_sec: 0.9,
+        bass_enhancement: "Gentle low-shelf boost on bass drops and transitions",
+      },
+    },
+  };
+};
+
 export const Route = createFileRoute("/api/edit-plan")({
   server: {
     handlers: {
