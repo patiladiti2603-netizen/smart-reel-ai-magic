@@ -1190,6 +1190,7 @@ function PreviewScreen({
   const [elapsed, setElapsed] = useState(0);
   const [mediaReady, setMediaReady] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(false);
+  const [beatPulse, setBeatPulse] = useState(false);
   const [previewIssue, setPreviewIssue] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -1384,7 +1385,8 @@ function PreviewScreen({
     if (typeof window === "undefined" || !playing) return;
     if (beatTimerRef.current) window.clearInterval(beatTimerRef.current);
     beatTimerRef.current = window.setInterval(() => {
-      setMediaReady((ready) => ready);
+      setBeatPulse(true);
+      window.setTimeout(() => setBeatPulse(false), 90);
     }, beatIntervalMs);
     return () => {
       if (typeof window !== "undefined" && beatTimerRef.current) window.clearInterval(beatTimerRef.current);
