@@ -1,7 +1,7 @@
 "use client";
 
 import { createFileRoute, Link, useHydrated } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Sparkles,
   Upload,
@@ -45,7 +45,16 @@ type BrowserFileList = { length: number; item(index: number): File | null; [inde
 type EditPlan = {
   project: { title: string; category: string; aspect_ratio: string; target_duration_sec: number; language: string };
   style: { mood: string; color_grade: string; pacing: string; reference_match_notes: string };
-  music: { genre: string; bpm_estimate: number; song_suggestions: string[]; beat_sync: boolean };
+  music: {
+    genre: string;
+    selected_song: string;
+    bpm_estimate: number;
+    song_suggestions: string[];
+    beat_sync: boolean;
+    beat_markers: number[];
+    bass_drops: number[];
+    audio_mix: { volume_balance: string; fade_in_sec: number; fade_out_sec: number; bass_enhancement: string };
+  };
   timeline: Array<{ index: number; clip_ref: string; in_sec: number; out_sec: number; speed: number; effect: string; transition_in: string; caption: string | null }>;
   text_animations: Array<{ at_sec: number; text: string; style: string }>;
   subtitles: { enabled: boolean; language: string; style: string };
@@ -53,7 +62,7 @@ type EditPlan = {
   notes_for_creator: string;
 };
 
-type SavedProject = { id: string; title: string; savedAt: number; category: string; language: string; platform: string; instructions: string; reference: string; selected: Record<string, string[]>; plan: EditPlan | null };
+type SavedProject = { id: string; title: string; savedAt: number; category: string; language: string; platform: string; instructions: string; reference: string; selected: Record<string, string[]>; selectedSongTitle?: string; plan: EditPlan | null };
 
 const CATEGORIES = ["Instagram Reel", "Wedding", "Haldi", "Mehendi", "Birthday", "Engagement", "Couple Reel", "Travel", "Party", "College Event", "Family Function", "Baby Shoot", "Gym Reel", "Festival", "Vlog"];
 const PLATFORMS = ["Instagram Reel", "YouTube", "WhatsApp Status"] as const;
