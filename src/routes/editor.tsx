@@ -196,6 +196,7 @@ function Editor() {
   const [refPhoto, setRefPhoto] = useState<ReferenceMedia>(null);
   const [song, setSong] = useState<SongFile>(null);
   const [selectedSongTitle, setSelectedSongTitle] = useState<string>("");
+  const [songPreviewing, setSongPreviewing] = useState<string | null>(null);
 
   // captions (optional)
   const [captionsEnabled, setCaptionsEnabled] = useState(false);
@@ -287,6 +288,40 @@ function Editor() {
     () => getRecommendedSongs(category, selected, qualityMode),
     [category, selected, qualityMode],
   );
+
+  const previewRecommendedSong = (rec: RecommendedSong) => {
+    if (!canUseBrowser || typeof window === "undefined") return;
+    const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtor) return;
+    const ctx = new AudioCtor();
+    const master = ctx.createGain();
+    const bass = ctx.createBiquadFilter();
+    bass.type = "lowshelf";
+    bass.frequency.value = 120;
+    bass.gain.value = 5;
+    master.gain.value = 0.08;
+    bass.connect(master);
+    master.connect(ctx.destination);
+    const step = 60 / rec.bpm;
+    setSongPreviewing(rec.title);
+    for (let i = 0; i < 8; i += 1) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = i % 4 === 0 ? "sawtooth" : "sine";
+      osc.frequency.value = i % 4 === 0 ? 96 : 220 + (i % 3) * 80;
+      gain.gain.setValueAtTime(0, ctx.currentTime + i * step);
+      gain.gain.linearRampToValueAtTime(i % 4 === 0 ? 0.42 : 0.22, ctx.currentTime + i * step + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * step + 0.24);
+      osc.connect(gain);
+      gain.connect(bass);
+      osc.start(ctx.currentTime + i * step);
+      osc.stop(ctx.currentTime + i * step + 0.28);
+    }
+    window.setTimeout(() => {
+      setSongPreviewing(null);
+      ctx.close().catch(() => {});
+    }, Math.min(5000, step * 8 * 1000 + 200));
+  };
 
   useEffect(() => {
     if (song) return;
