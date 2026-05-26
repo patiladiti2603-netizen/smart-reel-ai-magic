@@ -1043,7 +1043,10 @@ function PlanView({ plan }: { plan: EditPlan }) {
       </Section>
 
       <Section icon={Music2} title={`Music · ${plan.music.bpm_estimate} BPM`}>
+        <Row k="Selected song" v={plan.music.selected_song || plan.music.song_suggestions[0] || "Single AI-selected track"} />
         <Row k="Genre" v={plan.music.genre} />
+        <Row k="Audio mix" v={plan.music.audio_mix ? `${plan.music.audio_mix.volume_balance} · fade ${plan.music.audio_mix.fade_in_sec}s/${plan.music.audio_mix.fade_out_sec}s · ${plan.music.audio_mix.bass_enhancement}` : "Balanced cinematic mix"} />
+        <Row k="Beat engine" v={`${plan.music.beat_markers?.length ?? 0} beat cuts · ${plan.music.bass_drops?.length ?? 0} bass drops`} />
         <div className="mt-2 space-y-1.5">
           {plan.music.song_suggestions.map((s, i) => (
             <div key={i} className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2 text-sm">{s}</div>
