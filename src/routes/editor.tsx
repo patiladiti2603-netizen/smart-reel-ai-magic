@@ -1167,6 +1167,176 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
+async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongFile, captionsEnabled: boolean, onProgress: (message: string) => void) {
+  if (typeof window === "undefined") return;
+  const MediaRecorderCtor = window.MediaRecorder;
+  if (!MediaRecorderCtor) throw new Error("Playable video export is not supported in this browser.");
+
+  const isPortrait = plan.project.aspect_ratio.includes("9:16") || plan.project.aspect_ratio.includes("9/16");
+  const width = isPortrait ? 720 : 1280;
+  const height = isPortrait ? 1280 : 720;
+  const canvas = window.document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not prepare video renderer.");
+
+  const stream = canvas.captureStream(30);
+  const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  let audioCtx: AudioContext | null = null;
+  let audioEl: HTMLAudioElement | null = null;
+  if (AudioCtor) {
+    audioCtx = new AudioCtor();
+    const destination = audioCtx.createMediaStreamDestination();
+    const gain = audioCtx.createGain();
+    const bass = audioCtx.createBiquadFilter();
+    const compressor = audioCtx.createDynamicsCompressor();
+    bass.type = "lowshelf";
+    bass.frequency.value = 120;
+    bass.gain.value = 4.5;
+    compressor.threshold.value = -18;
+    compressor.ratio.value = 3;
+    gain.gain.value = 0.86;
+
+    if (song) {
+      audioEl = new Audio(song.url);
+      audioEl.crossOrigin = "anonymous";
+      audioEl.loop = true;
+      audioEl.volume = 0.9;
+      const source = audioCtx.createMediaElementSource(audioEl);
+      source.connect(bass);
+    } else {
+      const osc = audioCtx.createOscillator();
+      const pulse = audioCtx.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.value = 96;
+      pulse.gain.value = 0.0001;
+      const step = 60 / Math.max(70, plan.music.bpm_estimate || 100);
+      const duration = Math.max(8, plan.project.target_duration_sec);
+      for (let t = 0; t < duration; t += step) {
+        pulse.gain.setValueAtTime(0.0001, audioCtx.currentTime + t);
+        pulse.gain.linearRampToValueAtTime(0.22, audioCtx.currentTime + t + 0.025);
+        pulse.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + t + 0.18);
+      }
+      osc.connect(pulse);
+      pulse.connect(bass);
+      osc.start();
+      osc.stop(audioCtx.currentTime + duration + 0.2);
+    }
+    bass.connect(compressor);
+    compressor.connect(gain);
+    gain.connect(destination);
+    destination.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
+  }
+
+  const chunks: Blob[] = [];
+  const mimeType = MediaRecorderCtor.isTypeSupported("video/webm;codecs=vp9,opus") ? "video/webm;codecs=vp9,opus" : "video/webm";
+  const recorder = new MediaRecorderCtor(stream, { mimeType, videoBitsPerSecond: 5_000_000, audioBitsPerSecond: 160_000 });
+  recorder.ondataavailable = (event) => {
+    if (event.data.size > 0) chunks.push(event.data);
+  };
+
+  const drawCover = (media: CanvasImageSource) => {
+    const sourceWidth = "videoWidth" in media ? media.videoWidth : "naturalWidth" in media ? media.naturalWidth : width;
+    const sourceHeight = "videoHeight" in media ? media.videoHeight : "naturalHeight" in media ? media.naturalHeight : height;
+    const scale = Math.max(width / sourceWidth, height / sourceHeight);
+    const x = (width - sourceWidth * scale) / 2;
+    const y = (height - sourceHeight * scale) / 2;
+    ctx.drawImage(media, x, y, sourceWidth * scale, sourceHeight * scale);
+  };
+
+  const drawOverlays = (label: string, caption: string | null, filter: string) => {
+    ctx.filter = "none";
+    const grd = ctx.createRadialGradient(width / 2, height / 2, width * 0.2, width / 2, height / 2, width * 0.8);
+    grd.addColorStop(0, "rgba(0,0,0,0)");
+    grd.addColorStop(1, "rgba(0,0,0,0.48)");
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = "rgba(217,70,239,0.23)";
+    ctx.fillRect(0, 0, width, Math.max(3, height * 0.006));
+    ctx.fillStyle = "rgba(0,0,0,0.48)";
+    ctx.fillRect(24, 24, Math.min(width - 48, label.length * 10 + 46), 34);
+    ctx.fillStyle = "rgba(255,255,255,0.86)";
+    ctx.font = "18px Inter, Arial, sans-serif";
+    ctx.fillText(label.slice(0, 48), 42, 47);
+    if (captionsEnabled && caption) {
+      ctx.font = `700 ${isPortrait ? 34 : 30}px Inter, Arial, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(0,0,0,0.58)";
+      ctx.fillRect(width * 0.1, height * 0.78, width * 0.8, 72);
+      ctx.fillStyle = "white";
+      ctx.fillText(caption.slice(0, 42), width / 2, height * 0.78 + 47);
+      ctx.textAlign = "left";
+    }
+    ctx.filter = filter;
+  };
+
+  const recordDone = new Promise<Blob>((resolve) => {
+    recorder.onstop = () => resolve(new Blob(chunks, { type: "video/webm" }));
+  });
+
+  recorder.start(250);
+  if (audioEl) await audioEl.play().catch(() => undefined);
+
+  const filter = colorGradeFilter(plan.style.color_grade);
+  let renderedSec = 0;
+  for (let i = 0; i < plan.timeline.length; i += 1) {
+    const cut = plan.timeline[i];
+    const clip = clips.find((c) => c.name === cut.clip_ref) ?? clips[i % Math.max(1, clips.length)];
+    const durationMs = Math.max(600, (cut.out_sec - cut.in_sec) * 1000);
+    onProgress(`Rendering cut ${i + 1}/${plan.timeline.length}`);
+    if (clip?.kind === "video") {
+      const video = window.document.createElement("video");
+      video.src = clip.url;
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "auto";
+      await new Promise<void>((resolve) => {
+        video.onloadedmetadata = () => resolve();
+        video.onerror = () => resolve();
+      });
+      try { video.currentTime = Math.min(cut.in_sec, Math.max(0, (video.duration || cut.out_sec) - 0.1)); } catch {}
+      await video.play().catch(() => undefined);
+      const start = window.performance.now();
+      while (window.performance.now() - start < durationMs) {
+        ctx.fillStyle = "#07050f";
+        ctx.fillRect(0, 0, width, height);
+        ctx.filter = filter;
+        drawCover(video);
+        drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
+      }
+      video.pause();
+    } else if (clip) {
+      const image = new Image();
+      image.src = clip.url;
+      await image.decode().catch(() => undefined);
+      const start = window.performance.now();
+      while (window.performance.now() - start < durationMs) {
+        ctx.fillStyle = "#07050f";
+        ctx.fillRect(0, 0, width, height);
+        ctx.filter = filter;
+        drawCover(image);
+        drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
+      }
+    }
+    renderedSec += durationMs / 1000;
+    if (renderedSec > Math.max(45, plan.project.target_duration_sec + 4)) break;
+  }
+
+  recorder.stop();
+  audioEl?.pause();
+  const blob = await recordDone;
+  await audioCtx?.close().catch(() => undefined);
+  const url = URL.createObjectURL(blob);
+  const link = window.document.createElement("a");
+  link.href = url;
+  link.download = `${plan.project.title.replace(/\s+/g, "-").toLowerCase()}-preview.webm`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 /* ---------- Preview screen with sequential clip player ---------- */
 
 function PreviewScreen({
