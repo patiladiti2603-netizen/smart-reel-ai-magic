@@ -601,8 +601,39 @@ function Editor() {
 
           {/* single song */}
           <Card>
-            <Label icon={Music2} title="Your song (one track for the whole reel)" />
-            <p className="mt-1 text-xs text-white/50">Upload ONE audio file. The AI syncs every cut to its beat. Plays back in preview.</p>
+            <Label icon={Music2} title="Recommended Songs For Your Reel" />
+            <p className="mt-1 text-xs text-white/50">Pick one AI song or upload your own. Smart Reel uses only ONE track for the full reel.</p>
+            <div className="mt-3 grid gap-2">
+              {recommendedSongs.map((rec) => {
+                const active = !song && selectedSongTitle === rec.title;
+                return (
+                  <button
+                    key={rec.title}
+                    onClick={() => {
+                      if (song && typeof window !== "undefined") URL.revokeObjectURL(song.url);
+                      setSong(null);
+                      setSelectedSongTitle(rec.title);
+                    }}
+                    className={
+                      "rounded-xl border px-3 py-2 text-left " +
+                      (active ? "border-fuchsia-400/60 bg-fuchsia-500/15" : "border-white/10 bg-white/[0.03] hover:border-white/20")
+                    }
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-medium text-white/85">{rec.title}</span>
+                      <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-white/55">{rec.bpm} BPM</span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-white/45">
+                      <span className="line-clamp-1">{rec.vibe}</span>
+                      <span className="shrink-0">Preview vibe</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="my-4 h-px bg-white/10" />
+            <Label icon={Music2} title="Upload Your Song" />
+            <p className="mt-1 text-xs text-white/50">Upload MP3/audio to replace AI songs. AI detects beat markers, bass drops and emotional timing.</p>
             {song ? (
               <div className="mt-3 flex items-center gap-3 rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-3 py-2">
                 <Music2 className="h-4 w-4 text-fuchsia-300" />
@@ -612,6 +643,7 @@ function Editor() {
                   onClick={() => {
                     if (song && typeof window !== "undefined") URL.revokeObjectURL(song.url);
                     setSong(null);
+                    setSelectedSongTitle(recommendedSongs[0]?.title || "");
                   }}
                   className="rounded-full bg-black/60 p-1.5 text-white/70 hover:text-white"
                   aria-label="Remove song"
@@ -633,6 +665,7 @@ function Editor() {
                     if (!f) return;
                     setSong((prev) => {
                       if (prev) URL.revokeObjectURL(prev.url);
+                      setSelectedSongTitle(f.name);
                       return { id: `song-${Date.now()}`, file: f, url: URL.createObjectURL(f), name: f.name };
                     });
                   }}
