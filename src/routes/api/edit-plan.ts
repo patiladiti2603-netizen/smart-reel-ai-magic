@@ -209,6 +209,8 @@ export const Route = createFileRoute("/api/edit-plan")({
         const userPrompt = `Category: ${parsed.data.category}
 Language: ${parsed.data.language}
 Target platform: ${parsed.data.platform}
+Selected single song: ${parsed.data.selectedSong}
+Custom uploaded song: ${parsed.data.customSongUploaded ? "yes — detect beats/bass drops from this uploaded track" : "no — AI recommended song selection"}
 User instructions: ${parsed.data.instructions}
 Reference video description: ${parsed.data.reference || "(none provided)"}
 
@@ -230,7 +232,7 @@ Produce the edit plan now.`;
             experimental_output: Output.object({ schema: EditPlanSchema }),
           });
 
-          return new Response(JSON.stringify(output), {
+          return new Response(JSON.stringify(normalizePlan(output, parsed.data.selectedSong)), {
             status: 200,
             headers: { ...cors, "Content-Type": "application/json" },
           });
