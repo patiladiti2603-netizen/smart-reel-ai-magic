@@ -462,7 +462,7 @@ function Editor() {
       id,
       title: plan?.project.title ?? `${category} reel`,
       savedAt: Date.now(),
-      category, language, platform, instructions, reference, selected, plan,
+      category, language, platform, instructions, reference, selected, selectedSongTitle: song?.name || selectedSongTitle, plan,
     };
     try {
       const raw = window.localStorage.getItem(PROJECTS_KEY);
@@ -481,9 +481,9 @@ function Editor() {
   useEffect(() => {
     if (typeof window === "undefined" || !plan) return;
     try {
-      window.localStorage.setItem("smartreel.draft.v1", JSON.stringify({ category, language, platform, instructions, reference, selected, plan, savedAt: Date.now() }));
+      window.localStorage.setItem("smartreel.draft.v1", JSON.stringify({ category, language, platform, instructions, reference, selected, selectedSongTitle: song?.name || selectedSongTitle, plan, savedAt: Date.now() }));
     } catch {}
-  }, [plan, category, language, platform, instructions, reference, selected]);
+  }, [plan, category, language, platform, instructions, reference, selected, song, selectedSongTitle]);
 
   const loadProject = (p: SavedProject) => {
     setCategory(p.category);
@@ -492,6 +492,7 @@ function Editor() {
     setInstructions(p.instructions);
     setReference(p.reference);
     setSelected(p.selected || {});
+    setSelectedSongTitle(p.selectedSongTitle || "");
     setPlan(p.plan);
     setStage(p.plan ? "plan" : "setup");
     setShowSaved(false);
