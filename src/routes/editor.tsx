@@ -1389,7 +1389,10 @@ function PreviewScreen({
       return start;
     });
   }, [sequence]);
-  const previewDuration = Math.max(1, cutStarts[cutStarts.length - 1] + (sequence[sequence.length - 1]?.cutDuration ?? 1));
+  const previewDuration = Math.max(
+    1,
+    (cutStarts[cutStarts.length - 1] ?? 0) + (sequence[sequence.length - 1]?.cutDuration ?? 1),
+  );
   const beatIntervalMs = Math.max(350, (60 / Math.max(70, plan.music.bpm_estimate || 100)) * 1000);
 
   // active caption / text animation — only when captions are enabled
@@ -1418,8 +1421,9 @@ function PreviewScreen({
 
   const seekTo = useCallback((targetSec: number) => {
     const bounded = Math.max(0, Math.min(targetSec, previewDuration));
+    if (sequence.length === 0) return;
     const idx = Math.max(0, cutStarts.findIndex((start, i) => bounded >= start && bounded < start + (sequence[i]?.cutDuration ?? 0)));
-    const nextIdx = idx === -1 ? sequence.length - 1 : idx;
+    const nextIdx = idx === -1 ? Math.max(0, sequence.length - 1) : idx;
     setCutIdx(nextIdx);
     setElapsed(bounded);
     const audio = audioRef.current;
