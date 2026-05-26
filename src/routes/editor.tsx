@@ -1362,6 +1362,8 @@ function PreviewScreen({
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [beatPulse, setBeatPulse] = useState(false);
   const [previewIssue, setPreviewIssue] = useState<string | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const imageTimerRef = useRef<number | null>(null);
@@ -1575,6 +1577,21 @@ function PreviewScreen({
     else el.requestFullscreen?.();
   };
 
+  const downloadPlayablePreview = async () => {
+    if (exportBusy) return;
+    setExportBusy(true);
+    setExportStatus("Preparing playable preview…");
+    try {
+      await exportPreviewWebm(plan, clips, song, captionsEnabled, setExportStatus);
+      setExportStatus("Playable preview downloaded with audio");
+    } catch (err) {
+      setPreviewIssue(err instanceof Error ? err.message : "Video export failed in this browser.");
+    } finally {
+      setExportBusy(false);
+      if (typeof window !== "undefined") window.setTimeout(() => setExportStatus(null), 3000);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
@@ -1755,12 +1772,14 @@ function PreviewScreen({
       </div>
 
       {/* actions */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <ActionBtn icon={Download} label={exportBusy ? "Rendering…" : "Video"} onClick={downloadPlayablePreview} primary />
         <ActionBtn icon={Download} label="Export" onClick={onExport} primary />
         <ActionBtn icon={Save} label="Save" onClick={onSave} />
         <ActionBtn icon={RefreshCw} label="Edit again" onClick={onEditAgain} />
         <ActionBtn icon={Download} label="Plan JSON" onClick={onDownloadPlan} />
       </div>
+      {exportStatus && <p className="rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/10 px-3 py-2 text-xs text-fuchsia-100">{exportStatus}</p>}
 
       <details className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-sm text-white/70">
         <summary className="cursor-pointer text-white/80">Download source clips</summary>
