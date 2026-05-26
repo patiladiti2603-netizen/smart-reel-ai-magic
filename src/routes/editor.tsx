@@ -1374,7 +1374,10 @@ function PreviewScreen({
 
         <div
           ref={containerRef}
-          className={"relative mx-auto overflow-hidden rounded-xl bg-black sr-grain sr-vignette " + (isPortrait ? "aspect-[9/16] max-w-[280px]" : "aspect-video w-full")}
+          onClick={() => {
+            if (song) enableAudioGraph().finally(() => audioRef.current?.play().then(() => setAudioEnabled(true)).catch(() => setAudioEnabled(false)));
+          }}
+          className={"relative mx-auto overflow-hidden rounded-xl bg-gradient-to-br from-[#16091f] via-black to-[#071022] sr-grain sr-vignette " + (isPortrait ? "aspect-[9/16] max-w-[280px]" : "aspect-video w-full")}
         >
           {current?.clip ? (
             current.clip.kind === "video" ? (
@@ -1386,6 +1389,15 @@ function PreviewScreen({
                 style={{ filter, animationName: cinematicAnim }}
                 muted
                 playsInline
+                preload="auto"
+                controls={false}
+                onLoadedData={() => setMediaReady(true)}
+                onCanPlay={() => setMediaReady(true)}
+                onError={() => {
+                  setMediaReady(false);
+                  setPreviewIssue("This clip could not decode here, so Smart Reel will keep the frame visible in export package.");
+                  advance();
+                }}
                 onTimeUpdate={onTimeUpdate}
                 onEnded={advance}
               />
@@ -1396,14 +1408,23 @@ function PreviewScreen({
                 alt=""
                 className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
                 style={{ filter, animationName: cinematicAnim }}
+                onLoad={() => setMediaReady(true)}
               />
             )
           ) : (
-            <div className="flex h-full items-center justify-center text-sm text-white/50">No clips</div>
+            <div className="flex h-full items-center justify-center text-sm text-white/50">No clips loaded</div>
+          )}
+
+          {current?.clip && !mediaReady && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-fuchsia-950/70 via-black/80 to-blue-950/70 px-6 text-center">
+              <Film className="h-8 w-8 text-fuchsia-200" />
+              <p className="mt-3 text-sm font-medium text-white/85">Preparing HD preview frame</p>
+              <p className="mt-1 max-w-[220px] truncate text-xs text-white/45">{current.clip.name}</p>
+            </div>
           )}
 
           {song && (
-            <audio ref={audioRef} src={song.url} loop autoPlay />
+            <audio ref={audioRef} src={song.url} loop preload="auto" crossOrigin="anonymous" />
           )}
 
           {activeText && (
@@ -1427,6 +1448,28 @@ function PreviewScreen({
             {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
             {playing ? "Pause" : "Play"}
           </button>
+
+          <div className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-1 text-[10px] text-white/70 backdrop-blur">
+            {song ? (audioEnabled ? "Audio on" : "Tap for audio") : plan.music.selected_song || "AI song"}
+          </div>
+        </div>
+
+        <div className="mt-3 space-y-2">
+          <input
+            type="range"
+            min={0}
+            max={previewDuration}
+            step={0.05}
+            value={Math.min(elapsed, previewDuration)}
+            onChange={(e) => seekTo(Number(e.target.value))}
+            className="w-full accent-fuchsia-500"
+            aria-label="Preview timeline scrub"
+          />
+          <div className="flex items-center justify-between text-[11px] text-white/45">
+            <span>{elapsed.toFixed(1)}s / {previewDuration.toFixed(1)}s</span>
+            <span>{plan.music.beat_markers?.length ?? 0} beat markers · {plan.music.bass_drops?.length ?? 0} bass drops</span>
+          </div>
+          {previewIssue && <p className="rounded-lg border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{previewIssue}</p>}
         </div>
 
         {/* timeline */}
