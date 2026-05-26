@@ -1189,9 +1189,52 @@ function PreviewScreen({
     return "sr-fade";
   }, [current]);
 
-  const advance = () => {
+  const advance = useCallback(() => {
     setCutIdx((i) => (i + 1) % Math.max(1, sequence.length));
-  };
+  }, [sequence.length]);
+
+  const seekTo = useCallback((targetSec: number) => {
+    const bounded = Math.max(0, Math.min(targetSec, previewDuration));
+    const idx = Math.max(0, cutStarts.findIndex((start, i) => bounded >= start && bounded < start + (sequence[i]?.cutDuration ?? 0)));
+    const nextIdx = idx === -1 ? sequence.length - 1 : idx;
+    setCutIdx(nextIdx);
+    setElapsed(bounded);
+    const audio = audioRef.current;
+    if (audio) {
+      try {
+        audio.currentTime = bounded % Math.max(1, audio.duration || previewDuration);
+      } catch {}
+    }
+  }, [cutStarts, previewDuration, sequence]);
+
+  const enableAudioGraph = useCallback(async () => {
+    if (typeof window === "undefined" || !song) return;
+    try {
+      const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtor || audioCtxRef.current) return;
+      const audio = audioRef.current;
+      if (!audio) return;
+      const ctx = new AudioCtor();
+      const source = ctx.createMediaElementSource(audio);
+      const lowShelf = ctx.createBiquadFilter();
+      const compressor = ctx.createDynamicsCompressor();
+      const gain = ctx.createGain();
+      lowShelf.type = "lowshelf";
+      lowShelf.frequency.value = 110;
+      lowShelf.gain.value = 4;
+      compressor.threshold.value = -18;
+      compressor.knee.value = 24;
+      compressor.ratio.value = 3;
+      gain.gain.value = 0.86;
+      source.connect(lowShelf);
+      lowShelf.connect(compressor);
+      compressor.connect(gain);
+      gain.connect(ctx.destination);
+      audioCtxRef.current = ctx;
+    } catch {
+      // If a browser blocks WebAudio routing, keep normal audio playback working.
+    }
+  }, [song]);
 
   // playback control
   useEffect(() => {
