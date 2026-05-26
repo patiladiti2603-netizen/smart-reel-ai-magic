@@ -1,7 +1,7 @@
 "use client";
 
 import { createFileRoute, Link, useHydrated } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Sparkles,
   Upload,
@@ -45,7 +45,16 @@ type BrowserFileList = { length: number; item(index: number): File | null; [inde
 type EditPlan = {
   project: { title: string; category: string; aspect_ratio: string; target_duration_sec: number; language: string };
   style: { mood: string; color_grade: string; pacing: string; reference_match_notes: string };
-  music: { genre: string; bpm_estimate: number; song_suggestions: string[]; beat_sync: boolean };
+  music: {
+    genre: string;
+    selected_song: string;
+    bpm_estimate: number;
+    song_suggestions: string[];
+    beat_sync: boolean;
+    beat_markers: number[];
+    bass_drops: number[];
+    audio_mix: { volume_balance: string; fade_in_sec: number; fade_out_sec: number; bass_enhancement: string };
+  };
   timeline: Array<{ index: number; clip_ref: string; in_sec: number; out_sec: number; speed: number; effect: string; transition_in: string; caption: string | null }>;
   text_animations: Array<{ at_sec: number; text: string; style: string }>;
   subtitles: { enabled: boolean; language: string; style: string };
@@ -53,7 +62,7 @@ type EditPlan = {
   notes_for_creator: string;
 };
 
-type SavedProject = { id: string; title: string; savedAt: number; category: string; language: string; platform: string; instructions: string; reference: string; selected: Record<string, string[]>; plan: EditPlan | null };
+type SavedProject = { id: string; title: string; savedAt: number; category: string; language: string; platform: string; instructions: string; reference: string; selected: Record<string, string[]>; selectedSongTitle?: string; plan: EditPlan | null };
 
 const CATEGORIES = ["Instagram Reel", "Wedding", "Haldi", "Mehendi", "Birthday", "Engagement", "Couple Reel", "Travel", "Party", "College Event", "Family Function", "Baby Shoot", "Gym Reel", "Festival", "Vlog"];
 const PLATFORMS = ["Instagram Reel", "YouTube", "WhatsApp Status"] as const;
@@ -96,6 +105,37 @@ const EXPORT_FORMATS: Array<{ key: string; label: string; ratio: string }> = [
 ];
 
 const QUALITIES = ["720p", "1080p", "4K Premium"];
+
+type RecommendedSong = { title: string; vibe: string; bpm: number; category: string; previewTone: string };
+
+const SONG_LIBRARY: RecommendedSong[] = [
+  { title: "Romantic Marathi Cinematic Theme", vibe: "Warm wedding emotion, slow-mo entries, golden grade", bpm: 82, category: "Wedding", previewTone: "cinematic-romance" },
+  { title: "Emotional Hindi Wedding Piano", vibe: "Soft vocals, family moments, premium ceremony pacing", bpm: 76, category: "Wedding", previewTone: "emotional-piano" },
+  { title: "Trending Haldi Dhol Beat", vibe: "Energetic Marathi beats, smiles, yellow glow, fast cuts", bpm: 132, category: "Haldi", previewTone: "dhol-energy" },
+  { title: "Mehendi Folk Pop Groove", vibe: "Playful hand details, dance circles, colorful transitions", bpm: 118, category: "Mehendi", previewTone: "folk-pop" },
+  { title: "Birthday Party Pop Hook", vibe: "Happy upbeat party edits, flash cuts, cake reveal", bpm: 124, category: "Birthday", previewTone: "party-pop" },
+  { title: "Aesthetic Travel Chillwave", vibe: "Chill cinematic travel, walking shots, sky and road montages", bpm: 96, category: "Travel", previewTone: "travel-chill" },
+  { title: "Viral Couple Slow Reverb", vibe: "Romantic slow song feel, emotional zooms, close-up moments", bpm: 88, category: "Couple Reel", previewTone: "couple-reverb" },
+  { title: "Ultra Viral Reel Phonk Pop", vibe: "Fast hook, velocity cuts, bass drops, Instagram trend energy", bpm: 150, category: "Instagram Reel", previewTone: "viral-bass" },
+  { title: "YouTube Cinematic Rise", vibe: "Wide cinematic intro, build-up, smooth creator montage", bpm: 104, category: "YouTube", previewTone: "cinematic-rise" },
+];
+
+const getRecommendedSongs = (category: string, selected: Record<string, string[]>, qualityMode: string): RecommendedSong[] => {
+  const musicPicks = new Set(selected.music ?? []);
+  const stylePicks = new Set(selected.style ?? []);
+  const matches = SONG_LIBRARY.filter((song) => {
+    if (song.category === category || song.category === "Instagram Reel") return true;
+    if (category.includes("Wedding") && song.category === "Wedding") return true;
+    if (musicPicks.has("Party Beats") && song.previewTone.includes("party")) return true;
+    if (musicPicks.has("Romantic Marathi Songs") && /Romantic|Wedding|Couple/.test(song.category)) return true;
+    if (musicPicks.has("Viral Instagram Audio") && song.category === "Instagram Reel") return true;
+    if (stylePicks.has("Travel Cinematic") && song.category === "Travel") return true;
+    return false;
+  });
+  const ranked = matches.length ? matches : SONG_LIBRARY.filter((song) => ["Instagram Reel", "Wedding", "Travel"].includes(song.category));
+  const preferred = qualityMode.includes("Viral") ? [...ranked].sort((a, b) => b.bpm - a.bpm) : ranked;
+  return preferred.slice(0, 4);
+};
 
 type OptionGroup = { key: string; title: string; options: string[] };
 
@@ -155,6 +195,8 @@ function Editor() {
   const [refVideo, setRefVideo] = useState<ReferenceMedia>(null);
   const [refPhoto, setRefPhoto] = useState<ReferenceMedia>(null);
   const [song, setSong] = useState<SongFile>(null);
+  const [selectedSongTitle, setSelectedSongTitle] = useState<string>("");
+  const [songPreviewing, setSongPreviewing] = useState<string | null>(null);
 
   // captions (optional)
   const [captionsEnabled, setCaptionsEnabled] = useState(false);
@@ -228,17 +270,63 @@ function Editor() {
     if (instructions.trim()) parts.push(`Extra notes: ${instructions.trim()}`);
     if (refVideo) parts.push(`Reference reel uploaded: "${refVideo.name}". DEEPLY match its pacing, transition vocabulary, cut frequency, color grade, text animation style and beat-sync feel. Recreate the same cinematic vibe with the user's own clips.`);
     if (refPhoto) parts.push(`Reference photo uploaded: "${refPhoto.name}" — match its color tone and mood.`);
-    if (song) parts.push(`User uploaded ONE song: "${song.name}". Use this exact single track for the ENTIRE reel — do not switch songs. Sync every cut to its beat.`);
-    parts.push("SINGLE SONG ONLY for the whole reel. Sync every cut to the beat of that one song. Use trending Instagram-style transitions (whip pan, zoom punch, motion blur, flash, velocity edit). Open with a strong viral hook in the first 1.5s. End on an emotional or punchy beat.");
+    if (song) parts.push(`User uploaded ONE song: "${song.name}". Use this exact single track for the ENTIRE reel — do not switch songs. Detect beats, bass drops, emotional timing and sync every cut to this uploaded track.`);
+    else if (selectedSongTitle) parts.push(`Selected AI recommended ONE song: "${selectedSongTitle}". Use this as the single chosen song for the whole reel and sync the full timeline to it.`);
+    else parts.push(`AI must recommend and choose ONE best song from the event category, clip energy, reference style and pacing.`);
+    parts.push("SINGLE SONG ONLY for the whole reel. Add beat_markers and bass_drops. Sync every cut to the beat of that one song. Use cinematic audio timing, volume balancing, fade in/out, bass enhancement, trending Instagram-style transitions (whip pan, zoom punch, motion blur, flash, velocity edit), hook intro editing, emotional pacing and professional storytelling. Open with a strong viral hook in the first 1.5s. End on an emotional or punchy beat.");
     if (captionsEnabled && captionText.trim()) {
       parts.push(`Captions ENABLED. Use this exact user-provided caption text, split across hero moments naturally: """${captionText.trim()}""". Caption style: ${captionStyle}.`);
     } else {
       parts.push("Captions DISABLED — do NOT generate any captions, text animations or subtitles. Leave caption fields null and text_animations as an empty array.");
     }
     return parts.join(". ");
-  }, [selected, instructions, refVideo, refPhoto, song, qualityMode, category, instagramSubstyle, captionsEnabled, captionText, captionStyle]);
+  }, [selected, instructions, refVideo, refPhoto, song, selectedSongTitle, qualityMode, category, instagramSubstyle, captionsEnabled, captionText, captionStyle]);
 
   const totalSelected = Object.values(selected).reduce((n, arr) => n + arr.length, 0);
+
+  const recommendedSongs = useMemo(
+    () => getRecommendedSongs(category, selected, qualityMode),
+    [category, selected, qualityMode],
+  );
+
+  const previewRecommendedSong = (rec: RecommendedSong) => {
+    if (!canUseBrowser || typeof window === "undefined") return;
+    const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtor) return;
+    const ctx = new AudioCtor();
+    const master = ctx.createGain();
+    const bass = ctx.createBiquadFilter();
+    bass.type = "lowshelf";
+    bass.frequency.value = 120;
+    bass.gain.value = 5;
+    master.gain.value = 0.08;
+    bass.connect(master);
+    master.connect(ctx.destination);
+    const step = 60 / rec.bpm;
+    setSongPreviewing(rec.title);
+    for (let i = 0; i < 8; i += 1) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = i % 4 === 0 ? "sawtooth" : "sine";
+      osc.frequency.value = i % 4 === 0 ? 96 : 220 + (i % 3) * 80;
+      gain.gain.setValueAtTime(0, ctx.currentTime + i * step);
+      gain.gain.linearRampToValueAtTime(i % 4 === 0 ? 0.42 : 0.22, ctx.currentTime + i * step + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * step + 0.24);
+      osc.connect(gain);
+      gain.connect(bass);
+      osc.start(ctx.currentTime + i * step);
+      osc.stop(ctx.currentTime + i * step + 0.28);
+    }
+    window.setTimeout(() => {
+      setSongPreviewing(null);
+      ctx.close().catch(() => {});
+    }, Math.min(5000, step * 8 * 1000 + 200));
+  };
+
+  useEffect(() => {
+    if (song) return;
+    setSelectedSongTitle((current) => current || recommendedSongs[0]?.title || "");
+  }, [recommendedSongs, song]);
 
   const makeLocalClip = (f: File): LocalClip => {
     const url = URL.createObjectURL(f);
@@ -284,10 +372,20 @@ function Editor() {
     const finalInstructions = extraInstruction ? `${composedInstructions}. ${extraInstruction}` : composedInstructions;
     if (!finalInstructions.trim()) throw new Error("Pick at least one option or type an instruction.");
     if (clips.length === 0) throw new Error("Add at least one clip or photo.");
+    const selectedSong = song?.name || selectedSongTitle || recommendedSongs[0]?.title || "AI choose best single song";
     const res = await fetch("/api/edit-plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ category, language, platform, instructions: finalInstructions, reference, clips: clipMetas }),
+      body: JSON.stringify({
+        category,
+        language,
+        platform,
+        instructions: finalInstructions,
+        reference,
+        clips: clipMetas,
+        selectedSong,
+        customSongUploaded: Boolean(song),
+      }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -399,7 +497,7 @@ function Editor() {
       id,
       title: plan?.project.title ?? `${category} reel`,
       savedAt: Date.now(),
-      category, language, platform, instructions, reference, selected, plan,
+      category, language, platform, instructions, reference, selected, selectedSongTitle: song?.name || selectedSongTitle, plan,
     };
     try {
       const raw = window.localStorage.getItem(PROJECTS_KEY);
@@ -418,9 +516,9 @@ function Editor() {
   useEffect(() => {
     if (typeof window === "undefined" || !plan) return;
     try {
-      window.localStorage.setItem("smartreel.draft.v1", JSON.stringify({ category, language, platform, instructions, reference, selected, plan, savedAt: Date.now() }));
+      window.localStorage.setItem("smartreel.draft.v1", JSON.stringify({ category, language, platform, instructions, reference, selected, selectedSongTitle: song?.name || selectedSongTitle, plan, savedAt: Date.now() }));
     } catch {}
-  }, [plan, category, language, platform, instructions, reference, selected]);
+  }, [plan, category, language, platform, instructions, reference, selected, song, selectedSongTitle]);
 
   const loadProject = (p: SavedProject) => {
     setCategory(p.category);
@@ -429,6 +527,7 @@ function Editor() {
     setInstructions(p.instructions);
     setReference(p.reference);
     setSelected(p.selected || {});
+    setSelectedSongTitle(p.selectedSongTitle || "");
     setPlan(p.plan);
     setStage(p.plan ? "plan" : "setup");
     setShowSaved(false);
@@ -537,8 +636,56 @@ function Editor() {
 
           {/* single song */}
           <Card>
-            <Label icon={Music2} title="Your song (one track for the whole reel)" />
-            <p className="mt-1 text-xs text-white/50">Upload ONE audio file. The AI syncs every cut to its beat. Plays back in preview.</p>
+            <Label icon={Music2} title="Recommended Songs For Your Reel" />
+            <p className="mt-1 text-xs text-white/50">Pick one AI song or upload your own. Smart Reel uses only ONE track for the full reel.</p>
+            <div className="mt-3 grid gap-2">
+              {recommendedSongs.map((rec) => {
+                const active = !song && selectedSongTitle === rec.title;
+                return (
+                  <button
+                    key={rec.title}
+                    onClick={() => {
+                      if (song && typeof window !== "undefined") URL.revokeObjectURL(song.url);
+                      setSong(null);
+                      setSelectedSongTitle(rec.title);
+                    }}
+                    className={
+                      "rounded-xl border px-3 py-2 text-left " +
+                      (active ? "border-fuchsia-400/60 bg-fuchsia-500/15" : "border-white/10 bg-white/[0.03] hover:border-white/20")
+                    }
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-medium text-white/85">{rec.title}</span>
+                      <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-white/55">{rec.bpm} BPM</span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-white/45">
+                      <span className="line-clamp-1">{rec.vibe}</span>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          previewRecommendedSong(rec);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            previewRecommendedSong(rec);
+                          }
+                        }}
+                        className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-white/65"
+                      >
+                        {songPreviewing === rec.title ? "Playing" : "Preview"}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="my-4 h-px bg-white/10" />
+            <Label icon={Music2} title="Upload Your Song" />
+            <p className="mt-1 text-xs text-white/50">Upload MP3/audio to replace AI songs. AI detects beat markers, bass drops and emotional timing.</p>
             {song ? (
               <div className="mt-3 flex items-center gap-3 rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 px-3 py-2">
                 <Music2 className="h-4 w-4 text-fuchsia-300" />
@@ -548,6 +695,7 @@ function Editor() {
                   onClick={() => {
                     if (song && typeof window !== "undefined") URL.revokeObjectURL(song.url);
                     setSong(null);
+                    setSelectedSongTitle(recommendedSongs[0]?.title || "");
                   }}
                   className="rounded-full bg-black/60 p-1.5 text-white/70 hover:text-white"
                   aria-label="Remove song"
@@ -569,6 +717,7 @@ function Editor() {
                     if (!f) return;
                     setSong((prev) => {
                       if (prev) URL.revokeObjectURL(prev.url);
+                      setSelectedSongTitle(f.name);
                       return { id: `song-${Date.now()}`, file: f, url: URL.createObjectURL(f), name: f.name };
                     });
                   }}
@@ -946,7 +1095,10 @@ function PlanView({ plan }: { plan: EditPlan }) {
       </Section>
 
       <Section icon={Music2} title={`Music · ${plan.music.bpm_estimate} BPM`}>
+        <Row k="Selected song" v={plan.music.selected_song || plan.music.song_suggestions[0] || "Single AI-selected track"} />
         <Row k="Genre" v={plan.music.genre} />
+        <Row k="Audio mix" v={plan.music.audio_mix ? `${plan.music.audio_mix.volume_balance} · fade ${plan.music.audio_mix.fade_in_sec}s/${plan.music.audio_mix.fade_out_sec}s · ${plan.music.audio_mix.bass_enhancement}` : "Balanced cinematic mix"} />
+        <Row k="Beat engine" v={`${plan.music.beat_markers?.length ?? 0} beat cuts · ${plan.music.bass_drops?.length ?? 0} bass drops`} />
         <div className="mt-2 space-y-1.5">
           {plan.music.song_suggestions.map((s, i) => (
             <div key={i} className="rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2 text-sm">{s}</div>
@@ -1015,6 +1167,176 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
+async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongFile, captionsEnabled: boolean, onProgress: (message: string) => void) {
+  if (typeof window === "undefined") return;
+  const MediaRecorderCtor = window.MediaRecorder;
+  if (!MediaRecorderCtor) throw new Error("Playable video export is not supported in this browser.");
+
+  const isPortrait = plan.project.aspect_ratio.includes("9:16") || plan.project.aspect_ratio.includes("9/16");
+  const width = isPortrait ? 720 : 1280;
+  const height = isPortrait ? 1280 : 720;
+  const canvas = window.document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not prepare video renderer.");
+
+  const stream = canvas.captureStream(30);
+  const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  let audioCtx: AudioContext | null = null;
+  let audioEl: HTMLAudioElement | null = null;
+  if (AudioCtor) {
+    audioCtx = new AudioCtor();
+    const destination = audioCtx.createMediaStreamDestination();
+    const gain = audioCtx.createGain();
+    const bass = audioCtx.createBiquadFilter();
+    const compressor = audioCtx.createDynamicsCompressor();
+    bass.type = "lowshelf";
+    bass.frequency.value = 120;
+    bass.gain.value = 4.5;
+    compressor.threshold.value = -18;
+    compressor.ratio.value = 3;
+    gain.gain.value = 0.86;
+
+    if (song) {
+      audioEl = new Audio(song.url);
+      audioEl.crossOrigin = "anonymous";
+      audioEl.loop = true;
+      audioEl.volume = 0.9;
+      const source = audioCtx.createMediaElementSource(audioEl);
+      source.connect(bass);
+    } else {
+      const osc = audioCtx.createOscillator();
+      const pulse = audioCtx.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.value = 96;
+      pulse.gain.value = 0.0001;
+      const step = 60 / Math.max(70, plan.music.bpm_estimate || 100);
+      const duration = Math.max(8, plan.project.target_duration_sec);
+      for (let t = 0; t < duration; t += step) {
+        pulse.gain.setValueAtTime(0.0001, audioCtx.currentTime + t);
+        pulse.gain.linearRampToValueAtTime(0.22, audioCtx.currentTime + t + 0.025);
+        pulse.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + t + 0.18);
+      }
+      osc.connect(pulse);
+      pulse.connect(bass);
+      osc.start();
+      osc.stop(audioCtx.currentTime + duration + 0.2);
+    }
+    bass.connect(compressor);
+    compressor.connect(gain);
+    gain.connect(destination);
+    destination.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
+  }
+
+  const chunks: Blob[] = [];
+  const mimeType = MediaRecorderCtor.isTypeSupported("video/webm;codecs=vp9,opus") ? "video/webm;codecs=vp9,opus" : "video/webm";
+  const recorder = new MediaRecorderCtor(stream, { mimeType, videoBitsPerSecond: 5_000_000, audioBitsPerSecond: 160_000 });
+  recorder.ondataavailable = (event) => {
+    if (event.data.size > 0) chunks.push(event.data);
+  };
+
+  const drawCover = (media: CanvasImageSource) => {
+    const sourceWidth = "videoWidth" in media ? media.videoWidth : "naturalWidth" in media ? media.naturalWidth : width;
+    const sourceHeight = "videoHeight" in media ? media.videoHeight : "naturalHeight" in media ? media.naturalHeight : height;
+    const scale = Math.max(width / sourceWidth, height / sourceHeight);
+    const x = (width - sourceWidth * scale) / 2;
+    const y = (height - sourceHeight * scale) / 2;
+    ctx.drawImage(media, x, y, sourceWidth * scale, sourceHeight * scale);
+  };
+
+  const drawOverlays = (label: string, caption: string | null, filter: string) => {
+    ctx.filter = "none";
+    const grd = ctx.createRadialGradient(width / 2, height / 2, width * 0.2, width / 2, height / 2, width * 0.8);
+    grd.addColorStop(0, "rgba(0,0,0,0)");
+    grd.addColorStop(1, "rgba(0,0,0,0.48)");
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = "rgba(217,70,239,0.23)";
+    ctx.fillRect(0, 0, width, Math.max(3, height * 0.006));
+    ctx.fillStyle = "rgba(0,0,0,0.48)";
+    ctx.fillRect(24, 24, Math.min(width - 48, label.length * 10 + 46), 34);
+    ctx.fillStyle = "rgba(255,255,255,0.86)";
+    ctx.font = "18px Inter, Arial, sans-serif";
+    ctx.fillText(label.slice(0, 48), 42, 47);
+    if (captionsEnabled && caption) {
+      ctx.font = `700 ${isPortrait ? 34 : 30}px Inter, Arial, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(0,0,0,0.58)";
+      ctx.fillRect(width * 0.1, height * 0.78, width * 0.8, 72);
+      ctx.fillStyle = "white";
+      ctx.fillText(caption.slice(0, 42), width / 2, height * 0.78 + 47);
+      ctx.textAlign = "left";
+    }
+    ctx.filter = filter;
+  };
+
+  const recordDone = new Promise<Blob>((resolve) => {
+    recorder.onstop = () => resolve(new Blob(chunks, { type: "video/webm" }));
+  });
+
+  recorder.start(250);
+  if (audioEl) await audioEl.play().catch(() => undefined);
+
+  const filter = colorGradeFilter(plan.style.color_grade);
+  let renderedSec = 0;
+  for (let i = 0; i < plan.timeline.length; i += 1) {
+    const cut = plan.timeline[i];
+    const clip = clips.find((c) => c.name === cut.clip_ref) ?? clips[i % Math.max(1, clips.length)];
+    const durationMs = Math.max(600, (cut.out_sec - cut.in_sec) * 1000);
+    onProgress(`Rendering cut ${i + 1}/${plan.timeline.length}`);
+    if (clip?.kind === "video") {
+      const video = window.document.createElement("video");
+      video.src = clip.url;
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "auto";
+      await new Promise<void>((resolve) => {
+        video.onloadedmetadata = () => resolve();
+        video.onerror = () => resolve();
+      });
+      try { video.currentTime = Math.min(cut.in_sec, Math.max(0, (video.duration || cut.out_sec) - 0.1)); } catch {}
+      await video.play().catch(() => undefined);
+      const start = window.performance.now();
+      while (window.performance.now() - start < durationMs) {
+        ctx.fillStyle = "#07050f";
+        ctx.fillRect(0, 0, width, height);
+        ctx.filter = filter;
+        drawCover(video);
+        drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
+      }
+      video.pause();
+    } else if (clip) {
+      const image = new Image();
+      image.src = clip.url;
+      await image.decode().catch(() => undefined);
+      const start = window.performance.now();
+      while (window.performance.now() - start < durationMs) {
+        ctx.fillStyle = "#07050f";
+        ctx.fillRect(0, 0, width, height);
+        ctx.filter = filter;
+        drawCover(image);
+        drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
+      }
+    }
+    renderedSec += durationMs / 1000;
+    if (renderedSec > Math.max(45, plan.project.target_duration_sec + 4)) break;
+  }
+
+  recorder.stop();
+  audioEl?.pause();
+  const blob = await recordDone;
+  await audioCtx?.close().catch(() => undefined);
+  const url = URL.createObjectURL(blob);
+  const link = window.document.createElement("a");
+  link.href = url;
+  link.download = `${plan.project.title.replace(/\s+/g, "-").toLowerCase()}-preview.webm`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 /* ---------- Preview screen with sequential clip player ---------- */
 
 function PreviewScreen({
@@ -1035,10 +1357,19 @@ function PreviewScreen({
 }) {
   const [cutIdx, setCutIdx] = useState(0);
   const [playing, setPlaying] = useState(true);
+  const [elapsed, setElapsed] = useState(0);
+  const [mediaReady, setMediaReady] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState(false);
+  const [beatPulse, setBeatPulse] = useState(false);
+  const [previewIssue, setPreviewIssue] = useState<string | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const imageTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const beatTimerRef = useRef<number | null>(null);
 
   // Match cuts to actual uploaded clips by name (fall back to round-robin)
   const sequence = useMemo(() => {
@@ -1052,6 +1383,19 @@ function PreviewScreen({
   const current = sequence[cutIdx];
   const filter = colorGradeFilter(plan.style.color_grade);
   const isPortrait = plan.project.aspect_ratio.includes("9:16") || plan.project.aspect_ratio.includes("9/16");
+  const cutStarts = useMemo(() => {
+    let cursor = 0;
+    return sequence.map((s) => {
+      const start = cursor;
+      cursor += s.cutDuration;
+      return start;
+    });
+  }, [sequence]);
+  const previewDuration = Math.max(
+    1,
+    (cutStarts[cutStarts.length - 1] ?? 0) + (sequence[sequence.length - 1]?.cutDuration ?? 1),
+  );
+  const beatIntervalMs = Math.max(350, (60 / Math.max(70, plan.music.bpm_estimate || 100)) * 1000);
 
   // active caption / text animation — only when captions are enabled
   const activeText = useMemo(() => {
@@ -1073,9 +1417,53 @@ function PreviewScreen({
     return "sr-fade";
   }, [current]);
 
-  const advance = () => {
+  const advance = useCallback(() => {
     setCutIdx((i) => (i + 1) % Math.max(1, sequence.length));
-  };
+  }, [sequence.length]);
+
+  const seekTo = useCallback((targetSec: number) => {
+    const bounded = Math.max(0, Math.min(targetSec, previewDuration));
+    if (sequence.length === 0) return;
+    const idx = Math.max(0, cutStarts.findIndex((start, i) => bounded >= start && bounded < start + (sequence[i]?.cutDuration ?? 0)));
+    const nextIdx = idx === -1 ? Math.max(0, sequence.length - 1) : idx;
+    setCutIdx(nextIdx);
+    setElapsed(bounded);
+    const audio = audioRef.current;
+    if (audio) {
+      try {
+        audio.currentTime = bounded % Math.max(1, audio.duration || previewDuration);
+      } catch {}
+    }
+  }, [cutStarts, previewDuration, sequence]);
+
+  const enableAudioGraph = useCallback(async () => {
+    if (typeof window === "undefined" || !song) return;
+    try {
+      const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtor || audioCtxRef.current) return;
+      const audio = audioRef.current;
+      if (!audio) return;
+      const ctx = new AudioCtor();
+      const source = ctx.createMediaElementSource(audio);
+      const lowShelf = ctx.createBiquadFilter();
+      const compressor = ctx.createDynamicsCompressor();
+      const gain = ctx.createGain();
+      lowShelf.type = "lowshelf";
+      lowShelf.frequency.value = 110;
+      lowShelf.gain.value = 4;
+      compressor.threshold.value = -18;
+      compressor.knee.value = 24;
+      compressor.ratio.value = 3;
+      gain.gain.value = 0.86;
+      source.connect(lowShelf);
+      lowShelf.connect(compressor);
+      compressor.connect(gain);
+      gain.connect(ctx.destination);
+      audioCtxRef.current = ctx;
+    } catch {
+      // If a browser blocks WebAudio routing, keep normal audio playback working.
+    }
+  }, [song]);
 
   // playback control
   useEffect(() => {
@@ -1084,26 +1472,49 @@ function PreviewScreen({
       window.clearTimeout(imageTimerRef.current);
       imageTimerRef.current = null;
     }
+    setMediaReady(false);
+    setPreviewIssue(null);
     if (!current || !current.clip) return;
 
     if (current.clip.kind === "image") {
+      setMediaReady(true);
       if (playing) {
         imageTimerRef.current = window.setTimeout(advance, current.cutDuration * 1000);
       }
     } else {
       const v = videoRef.current;
       if (v) {
+        v.muted = true;
+        v.playsInline = true;
+        v.preload = "auto";
         try {
-          v.currentTime = Math.min(current.cut.in_sec, Math.max(0, (v.duration || 0) - 0.1));
+          const duration = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : current.cut.out_sec;
+          v.currentTime = Math.min(current.cut.in_sec, Math.max(0, duration - 0.1));
         } catch {}
-        if (playing) v.play().catch(() => {});
+        if (playing) v.play().then(() => setMediaReady(true)).catch(() => {
+          setPlaying(false);
+          setPreviewIssue("Tap Play to start preview on this device.");
+        });
       }
     }
     return () => {
       if (typeof window !== "undefined" && imageTimerRef.current) window.clearTimeout(imageTimerRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cutIdx, playing]);
+  }, [cutIdx, playing, current, advance]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !playing) return;
+    const startedAt = window.performance.now();
+    const baseElapsed = cutStarts[cutIdx] ?? 0;
+    let raf = 0;
+    const tick = () => {
+      const live = baseElapsed + (window.performance.now() - startedAt) / 1000;
+      setElapsed(live > previewDuration ? live % previewDuration : live);
+      raf = window.requestAnimationFrame(tick);
+    };
+    raf = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(raf);
+  }, [playing, cutIdx, cutStarts, previewDuration]);
 
   const onTimeUpdate = () => {
     const v = videoRef.current;
@@ -1119,11 +1530,14 @@ function PreviewScreen({
       const v = videoRef.current;
       const a = audioRef.current;
       if (v) {
-        if (next) v.play().catch(() => {});
+        if (next) v.play().catch(() => setPreviewIssue("Tap Play again if your browser blocked autoplay."));
         else v.pause();
       }
       if (a) {
-        if (next) a.play().catch(() => {});
+        if (next) {
+          setAudioEnabled(true);
+          enableAudioGraph().finally(() => a.play().catch(() => setPreviewIssue("Tap the preview once to enable song audio.")));
+        }
         else a.pause();
       }
       return next;
@@ -1134,10 +1548,26 @@ function PreviewScreen({
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
-    a.volume = 0.85;
-    if (playing) a.play().catch(() => {});
+    const fadeIn = Math.max(0.1, plan.music.audio_mix?.fade_in_sec ?? 0.6);
+    const fadeOut = Math.max(0.1, plan.music.audio_mix?.fade_out_sec ?? 0.8);
+    const remaining = previewDuration - elapsed;
+    const fadeGain = Math.min(1, elapsed / fadeIn, remaining / fadeOut);
+    a.volume = Math.max(0.18, Math.min(0.9, 0.86 * fadeGain));
+    if (playing) a.play().then(() => setAudioEnabled(true)).catch(() => setAudioEnabled(false));
     else a.pause();
-  }, [playing, song]);
+  }, [playing, song, elapsed, previewDuration, plan.music.audio_mix]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !playing) return;
+    if (beatTimerRef.current) window.clearInterval(beatTimerRef.current);
+    beatTimerRef.current = window.setInterval(() => {
+      setBeatPulse(true);
+      window.setTimeout(() => setBeatPulse(false), 90);
+    }, beatIntervalMs);
+    return () => {
+      if (typeof window !== "undefined" && beatTimerRef.current) window.clearInterval(beatTimerRef.current);
+    };
+  }, [playing, beatIntervalMs]);
 
   const fullscreen = () => {
     if (typeof window === "undefined") return;
@@ -1145,6 +1575,21 @@ function PreviewScreen({
     if (!el) return;
     if (window.document.fullscreenElement) window.document.exitFullscreen?.();
     else el.requestFullscreen?.();
+  };
+
+  const downloadPlayablePreview = async () => {
+    if (exportBusy) return;
+    setExportBusy(true);
+    setExportStatus("Preparing playable preview…");
+    try {
+      await exportPreviewWebm(plan, clips, song, captionsEnabled, setExportStatus);
+      setExportStatus("Playable preview downloaded with audio");
+    } catch (err) {
+      setPreviewIssue(err instanceof Error ? err.message : "Video export failed in this browser.");
+    } finally {
+      setExportBusy(false);
+      if (typeof window !== "undefined") window.setTimeout(() => setExportStatus(null), 3000);
+    }
   };
 
   return (
@@ -1174,7 +1619,10 @@ function PreviewScreen({
 
         <div
           ref={containerRef}
-          className={"relative mx-auto overflow-hidden rounded-xl bg-black sr-grain sr-vignette " + (isPortrait ? "aspect-[9/16] max-w-[280px]" : "aspect-video w-full")}
+          onClick={() => {
+            if (song) enableAudioGraph().finally(() => audioRef.current?.play().then(() => setAudioEnabled(true)).catch(() => setAudioEnabled(false)));
+          }}
+          className={"relative mx-auto overflow-hidden rounded-xl bg-gradient-to-br from-[#16091f] via-black to-[#071022] sr-grain sr-vignette " + (isPortrait ? "aspect-[9/16] max-w-[280px]" : "aspect-video w-full")}
         >
           {current?.clip ? (
             current.clip.kind === "video" ? (
@@ -1183,9 +1631,18 @@ function PreviewScreen({
                 key={current.clip.id + cutIdx}
                 src={current.clip.url}
                 className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
-                style={{ filter, animationName: cinematicAnim }}
+                style={{ filter, animationName: cinematicAnim, transform: beatPulse ? "scale(1.025)" : undefined }}
                 muted
                 playsInline
+                preload="auto"
+                controls={false}
+                onLoadedData={() => setMediaReady(true)}
+                onCanPlay={() => setMediaReady(true)}
+                onError={() => {
+                  setMediaReady(false);
+                  setPreviewIssue("This clip could not decode here, so Smart Reel will keep the frame visible in export package.");
+                  advance();
+                }}
                 onTimeUpdate={onTimeUpdate}
                 onEnded={advance}
               />
@@ -1195,15 +1652,24 @@ function PreviewScreen({
                 src={current.clip.url}
                 alt=""
                 className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
-                style={{ filter, animationName: cinematicAnim }}
+                style={{ filter, animationName: cinematicAnim, transform: beatPulse ? "scale(1.025)" : undefined }}
+                onLoad={() => setMediaReady(true)}
               />
             )
           ) : (
-            <div className="flex h-full items-center justify-center text-sm text-white/50">No clips</div>
+            <div className="flex h-full items-center justify-center text-sm text-white/50">No clips loaded</div>
+          )}
+
+          {current?.clip && !mediaReady && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-fuchsia-950/70 via-black/80 to-blue-950/70 px-6 text-center">
+              <Film className="h-8 w-8 text-fuchsia-200" />
+              <p className="mt-3 text-sm font-medium text-white/85">Preparing HD preview frame</p>
+              <p className="mt-1 max-w-[220px] truncate text-xs text-white/45">{current.clip.name}</p>
+            </div>
           )}
 
           {song && (
-            <audio ref={audioRef} src={song.url} loop autoPlay />
+            <audio ref={audioRef} src={song.url} loop preload="auto" crossOrigin="anonymous" />
           )}
 
           {activeText && (
@@ -1227,6 +1693,28 @@ function PreviewScreen({
             {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
             {playing ? "Pause" : "Play"}
           </button>
+
+          <div className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-1 text-[10px] text-white/70 backdrop-blur">
+            {song ? (audioEnabled ? "Audio on" : "Tap for audio") : plan.music.selected_song || "AI song"}
+          </div>
+        </div>
+
+        <div className="mt-3 space-y-2">
+          <input
+            type="range"
+            min={0}
+            max={previewDuration}
+            step={0.05}
+            value={Math.min(elapsed, previewDuration)}
+            onChange={(e) => seekTo(Number(e.target.value))}
+            className="w-full accent-fuchsia-500"
+            aria-label="Preview timeline scrub"
+          />
+          <div className="flex items-center justify-between text-[11px] text-white/45">
+            <span>{elapsed.toFixed(1)}s / {previewDuration.toFixed(1)}s</span>
+            <span>{plan.music.beat_markers?.length ?? 0} beat markers · {plan.music.bass_drops?.length ?? 0} bass drops</span>
+          </div>
+          {previewIssue && <p className="rounded-lg border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{previewIssue}</p>}
         </div>
 
         {/* timeline */}
@@ -1284,12 +1772,14 @@ function PreviewScreen({
       </div>
 
       {/* actions */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <ActionBtn icon={Download} label={exportBusy ? "Rendering…" : "Video"} onClick={downloadPlayablePreview} primary />
         <ActionBtn icon={Download} label="Export" onClick={onExport} primary />
         <ActionBtn icon={Save} label="Save" onClick={onSave} />
         <ActionBtn icon={RefreshCw} label="Edit again" onClick={onEditAgain} />
         <ActionBtn icon={Download} label="Plan JSON" onClick={onDownloadPlan} />
       </div>
+      {exportStatus && <p className="rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/10 px-3 py-2 text-xs text-fuchsia-100">{exportStatus}</p>}
 
       <details className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-sm text-white/70">
         <summary className="cursor-pointer text-white/80">Download source clips</summary>
