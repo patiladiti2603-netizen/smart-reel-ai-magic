@@ -106,6 +106,37 @@ const EXPORT_FORMATS: Array<{ key: string; label: string; ratio: string }> = [
 
 const QUALITIES = ["720p", "1080p", "4K Premium"];
 
+type RecommendedSong = { title: string; vibe: string; bpm: number; category: string; previewTone: string };
+
+const SONG_LIBRARY: RecommendedSong[] = [
+  { title: "Romantic Marathi Cinematic Theme", vibe: "Warm wedding emotion, slow-mo entries, golden grade", bpm: 82, category: "Wedding", previewTone: "cinematic-romance" },
+  { title: "Emotional Hindi Wedding Piano", vibe: "Soft vocals, family moments, premium ceremony pacing", bpm: 76, category: "Wedding", previewTone: "emotional-piano" },
+  { title: "Trending Haldi Dhol Beat", vibe: "Energetic Marathi beats, smiles, yellow glow, fast cuts", bpm: 132, category: "Haldi", previewTone: "dhol-energy" },
+  { title: "Mehendi Folk Pop Groove", vibe: "Playful hand details, dance circles, colorful transitions", bpm: 118, category: "Mehendi", previewTone: "folk-pop" },
+  { title: "Birthday Party Pop Hook", vibe: "Happy upbeat party edits, flash cuts, cake reveal", bpm: 124, category: "Birthday", previewTone: "party-pop" },
+  { title: "Aesthetic Travel Chillwave", vibe: "Chill cinematic travel, walking shots, sky and road montages", bpm: 96, category: "Travel", previewTone: "travel-chill" },
+  { title: "Viral Couple Slow Reverb", vibe: "Romantic slow song feel, emotional zooms, close-up moments", bpm: 88, category: "Couple Reel", previewTone: "couple-reverb" },
+  { title: "Ultra Viral Reel Phonk Pop", vibe: "Fast hook, velocity cuts, bass drops, Instagram trend energy", bpm: 150, category: "Instagram Reel", previewTone: "viral-bass" },
+  { title: "YouTube Cinematic Rise", vibe: "Wide cinematic intro, build-up, smooth creator montage", bpm: 104, category: "YouTube", previewTone: "cinematic-rise" },
+];
+
+const getRecommendedSongs = (category: string, selected: Record<string, string[]>, qualityMode: string): RecommendedSong[] => {
+  const musicPicks = new Set(selected.music ?? []);
+  const stylePicks = new Set(selected.style ?? []);
+  const matches = SONG_LIBRARY.filter((song) => {
+    if (song.category === category || song.category === "Instagram Reel") return true;
+    if (category.includes("Wedding") && song.category === "Wedding") return true;
+    if (musicPicks.has("Party Beats") && song.previewTone.includes("party")) return true;
+    if (musicPicks.has("Romantic Marathi Songs") && /Romantic|Wedding|Couple/.test(song.category)) return true;
+    if (musicPicks.has("Viral Instagram Audio") && song.category === "Instagram Reel") return true;
+    if (stylePicks.has("Travel Cinematic") && song.category === "Travel") return true;
+    return false;
+  });
+  const ranked = matches.length ? matches : SONG_LIBRARY.filter((song) => ["Instagram Reel", "Wedding", "Travel"].includes(song.category));
+  const preferred = qualityMode.includes("Viral") ? [...ranked].sort((a, b) => b.bpm - a.bpm) : ranked;
+  return preferred.slice(0, 4);
+};
+
 type OptionGroup = { key: string; title: string; options: string[] };
 
 const OPTION_GROUPS: OptionGroup[] = [
