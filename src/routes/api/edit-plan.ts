@@ -37,17 +37,22 @@ const EditPlanSchema = z.object({
   }),
   music: z.object({
     genre: z.string(),
-    selected_song: z.string(),
-    bpm_estimate: z.number(),
+    selected_song: z.string().optional().default("AI-selected cinematic single track"),
+    bpm_estimate: z.number().optional().default(100),
     song_suggestions: z.array(z.string()),
-    beat_sync: z.boolean(),
-    beat_markers: z.array(z.number()),
-    bass_drops: z.array(z.number()),
+    beat_sync: z.boolean().optional().default(true),
+    beat_markers: z.array(z.number()).optional().default([]),
+    bass_drops: z.array(z.number()).optional().default([]),
     audio_mix: z.object({
       volume_balance: z.string(),
       fade_in_sec: z.number(),
       fade_out_sec: z.number(),
       bass_enhancement: z.string(),
+    }).optional().default({
+      volume_balance: "Song at -8 LUFS with clip audio ducked under music for clear, audible cinematic playback",
+      fade_in_sec: 0.6,
+      fade_out_sec: 0.9,
+      bass_enhancement: "Gentle low-shelf boost on bass drops and transitions",
     }),
   }),
   timeline: z.array(
