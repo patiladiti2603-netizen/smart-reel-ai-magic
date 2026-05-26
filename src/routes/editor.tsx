@@ -1440,7 +1440,7 @@ function PreviewScreen({
                 key={current.clip.id + cutIdx}
                 src={current.clip.url}
                 className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
-                style={{ filter, animationName: cinematicAnim }}
+                style={{ filter, animationName: cinematicAnim, transform: beatPulse ? "scale(1.025)" : undefined }}
                 muted
                 playsInline
                 preload="auto"
@@ -1461,7 +1461,7 @@ function PreviewScreen({
                 src={current.clip.url}
                 alt=""
                 className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
-                style={{ filter, animationName: cinematicAnim }}
+                style={{ filter, animationName: cinematicAnim, transform: beatPulse ? "scale(1.025)" : undefined }}
                 onLoad={() => setMediaReady(true)}
               />
             )
