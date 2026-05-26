@@ -195,6 +195,7 @@ function Editor() {
   const [refVideo, setRefVideo] = useState<ReferenceMedia>(null);
   const [refPhoto, setRefPhoto] = useState<ReferenceMedia>(null);
   const [song, setSong] = useState<SongFile>(null);
+  const [selectedSongTitle, setSelectedSongTitle] = useState<string>("");
 
   // captions (optional)
   const [captionsEnabled, setCaptionsEnabled] = useState(false);
@@ -279,6 +280,16 @@ function Editor() {
   }, [selected, instructions, refVideo, refPhoto, song, qualityMode, category, instagramSubstyle, captionsEnabled, captionText, captionStyle]);
 
   const totalSelected = Object.values(selected).reduce((n, arr) => n + arr.length, 0);
+
+  const recommendedSongs = useMemo(
+    () => getRecommendedSongs(category, selected, qualityMode),
+    [category, selected, qualityMode],
+  );
+
+  useEffect(() => {
+    if (song) return;
+    setSelectedSongTitle((current) => current || recommendedSongs[0]?.title || "");
+  }, [recommendedSongs, song]);
 
   const makeLocalClip = (f: File): LocalClip => {
     const url = URL.createObjectURL(f);
