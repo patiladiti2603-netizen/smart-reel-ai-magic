@@ -1243,26 +1243,49 @@ function PreviewScreen({
       window.clearTimeout(imageTimerRef.current);
       imageTimerRef.current = null;
     }
+    setMediaReady(false);
+    setPreviewIssue(null);
     if (!current || !current.clip) return;
 
     if (current.clip.kind === "image") {
+      setMediaReady(true);
       if (playing) {
         imageTimerRef.current = window.setTimeout(advance, current.cutDuration * 1000);
       }
     } else {
       const v = videoRef.current;
       if (v) {
+        v.muted = true;
+        v.playsInline = true;
+        v.preload = "auto";
         try {
-          v.currentTime = Math.min(current.cut.in_sec, Math.max(0, (v.duration || 0) - 0.1));
+          const duration = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : current.cut.out_sec;
+          v.currentTime = Math.min(current.cut.in_sec, Math.max(0, duration - 0.1));
         } catch {}
-        if (playing) v.play().catch(() => {});
+        if (playing) v.play().then(() => setMediaReady(true)).catch(() => {
+          setPlaying(false);
+          setPreviewIssue("Tap Play to start preview on this device.");
+        });
       }
     }
     return () => {
       if (typeof window !== "undefined" && imageTimerRef.current) window.clearTimeout(imageTimerRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cutIdx, playing]);
+  }, [cutIdx, playing, current, advance]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !playing) return;
+    const startedAt = window.performance.now();
+    const baseElapsed = cutStarts[cutIdx] ?? 0;
+    let raf = 0;
+    const tick = () => {
+      const live = baseElapsed + (window.performance.now() - startedAt) / 1000;
+      setElapsed(live > previewDuration ? live % previewDuration : live);
+      raf = window.requestAnimationFrame(tick);
+    };
+    raf = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(raf);
+  }, [playing, cutIdx, cutStarts, previewDuration]);
 
   const onTimeUpdate = () => {
     const v = videoRef.current;
@@ -1278,11 +1301,14 @@ function PreviewScreen({
       const v = videoRef.current;
       const a = audioRef.current;
       if (v) {
-        if (next) v.play().catch(() => {});
+        if (next) v.play().catch(() => setPreviewIssue("Tap Play again if your browser blocked autoplay."));
         else v.pause();
       }
       if (a) {
-        if (next) a.play().catch(() => {});
+        if (next) {
+          setAudioEnabled(true);
+          enableAudioGraph().finally(() => a.play().catch(() => setPreviewIssue("Tap the preview once to enable song audio.")));
+        }
         else a.pause();
       }
       return next;
@@ -1293,10 +1319,25 @@ function PreviewScreen({
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
-    a.volume = 0.85;
-    if (playing) a.play().catch(() => {});
+    const fadeIn = Math.max(0.1, plan.music.audio_mix?.fade_in_sec ?? 0.6);
+    const fadeOut = Math.max(0.1, plan.music.audio_mix?.fade_out_sec ?? 0.8);
+    const remaining = previewDuration - elapsed;
+    const fadeGain = Math.min(1, elapsed / fadeIn, remaining / fadeOut);
+    a.volume = Math.max(0.18, Math.min(0.9, 0.86 * fadeGain));
+    if (playing) a.play().then(() => setAudioEnabled(true)).catch(() => setAudioEnabled(false));
     else a.pause();
-  }, [playing, song]);
+  }, [playing, song, elapsed, previewDuration, plan.music.audio_mix]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !playing) return;
+    if (beatTimerRef.current) window.clearInterval(beatTimerRef.current);
+    beatTimerRef.current = window.setInterval(() => {
+      setMediaReady((ready) => ready);
+    }, beatIntervalMs);
+    return () => {
+      if (typeof window !== "undefined" && beatTimerRef.current) window.clearInterval(beatTimerRef.current);
+    };
+  }, [playing, beatIntervalMs]);
 
   const fullscreen = () => {
     if (typeof window === "undefined") return;
