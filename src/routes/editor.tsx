@@ -1135,10 +1135,16 @@ function PreviewScreen({
 }) {
   const [cutIdx, setCutIdx] = useState(0);
   const [playing, setPlaying] = useState(true);
+  const [elapsed, setElapsed] = useState(0);
+  const [mediaReady, setMediaReady] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState(false);
+  const [previewIssue, setPreviewIssue] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const imageTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const beatTimerRef = useRef<number | null>(null);
 
   // Match cuts to actual uploaded clips by name (fall back to round-robin)
   const sequence = useMemo(() => {
@@ -1152,6 +1158,16 @@ function PreviewScreen({
   const current = sequence[cutIdx];
   const filter = colorGradeFilter(plan.style.color_grade);
   const isPortrait = plan.project.aspect_ratio.includes("9:16") || plan.project.aspect_ratio.includes("9/16");
+  const cutStarts = useMemo(() => {
+    let cursor = 0;
+    return sequence.map((s) => {
+      const start = cursor;
+      cursor += s.cutDuration;
+      return start;
+    });
+  }, [sequence]);
+  const previewDuration = Math.max(1, cutStarts[cutStarts.length - 1] + (sequence[sequence.length - 1]?.cutDuration ?? 1));
+  const beatIntervalMs = Math.max(350, (60 / Math.max(70, plan.music.bpm_estimate || 100)) * 1000);
 
   // active caption / text animation — only when captions are enabled
   const activeText = useMemo(() => {
