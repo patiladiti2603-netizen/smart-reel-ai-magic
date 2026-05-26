@@ -337,10 +337,20 @@ function Editor() {
     const finalInstructions = extraInstruction ? `${composedInstructions}. ${extraInstruction}` : composedInstructions;
     if (!finalInstructions.trim()) throw new Error("Pick at least one option or type an instruction.");
     if (clips.length === 0) throw new Error("Add at least one clip or photo.");
+    const selectedSong = song?.name || selectedSongTitle || recommendedSongs[0]?.title || "AI choose best single song";
     const res = await fetch("/api/edit-plan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ category, language, platform, instructions: finalInstructions, reference, clips: clipMetas }),
+      body: JSON.stringify({
+        category,
+        language,
+        platform,
+        instructions: finalInstructions,
+        reference,
+        clips: clipMetas,
+        selectedSong,
+        customSongUploaded: Boolean(song),
+      }),
     });
     const data = await res.json();
     if (!res.ok) {
