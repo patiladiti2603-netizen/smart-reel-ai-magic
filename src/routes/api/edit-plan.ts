@@ -16,6 +16,8 @@ const RequestSchema = z.object({
   instructions: z.string().min(1),
   reference: z.string().optional().default(""),
   clips: z.array(ClipSchema).min(1),
+  selectedSong: z.string().optional().default("AI choose best single song"),
+  customSongUploaded: z.boolean().optional().default(false),
   platform: z.enum(["Instagram Reel", "YouTube", "WhatsApp Status"]).default("Instagram Reel"),
 });
 
@@ -35,9 +37,18 @@ const EditPlanSchema = z.object({
   }),
   music: z.object({
     genre: z.string(),
+    selected_song: z.string(),
     bpm_estimate: z.number(),
     song_suggestions: z.array(z.string()),
     beat_sync: z.boolean(),
+    beat_markers: z.array(z.number()),
+    bass_drops: z.array(z.number()),
+    audio_mix: z.object({
+      volume_balance: z.string(),
+      fade_in_sec: z.number(),
+      fade_out_sec: z.number(),
+      bass_enhancement: z.string(),
+    }),
   }),
   timeline: z.array(
     z.object({
