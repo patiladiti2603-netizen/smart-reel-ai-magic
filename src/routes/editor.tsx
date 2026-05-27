@@ -1694,7 +1694,13 @@ function PreviewScreen({
         <div
           ref={containerRef}
           onClick={() => {
-            if (song) enableAudioGraph().finally(() => audioRef.current?.play().then(() => setAudioEnabled(true)).catch(() => setAudioEnabled(false)));
+            if (song) enableAudioGraph().finally(() => audioRef.current?.play().then(() => {
+              setAudioEnabled(true);
+              setNeedsAudioTap(false);
+            }).catch(() => {
+              setAudioEnabled(false);
+              setNeedsAudioTap(true);
+            }));
           }}
           className={"relative mx-auto overflow-hidden rounded-xl bg-gradient-to-br from-[#16091f] via-black to-[#071022] sr-grain sr-vignette " + (isPortrait ? "aspect-[9/16] max-w-[280px]" : "aspect-video w-full")}
         >
@@ -1744,6 +1750,12 @@ function PreviewScreen({
 
           {song && (
             <audio ref={audioRef} src={song.url} loop preload="auto" crossOrigin="anonymous" />
+          )}
+
+          {song && needsAudioTap && (
+            <div className="pointer-events-none absolute inset-x-4 top-1/2 z-10 -translate-y-1/2 rounded-xl border border-fuchsia-300/25 bg-black/65 px-4 py-3 text-center text-xs text-white/85 backdrop-blur">
+              Tap preview to enable audible song mix
+            </div>
           )}
 
           {activeText && (
@@ -1804,7 +1816,7 @@ function PreviewScreen({
             >
               {s.clip ? (
                 s.clip.kind === "video" ? (
-                  <video src={s.clip.url} className="h-full w-full object-cover" muted playsInline style={{ filter }} />
+                  <video src={s.clip.url} className="h-full w-full object-cover" muted playsInline preload="metadata" style={{ filter }} />
                 ) : (
                   <img src={s.clip.url} alt="" className="h-full w-full object-cover" style={{ filter }} />
                 )
