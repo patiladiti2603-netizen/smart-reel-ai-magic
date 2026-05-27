@@ -1417,6 +1417,7 @@ function PreviewScreen({
   const [elapsed, setElapsed] = useState(0);
   const [mediaReady, setMediaReady] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(false);
+  const [needsAudioTap, setNeedsAudioTap] = useState(Boolean(song));
   const [beatPulse, setBeatPulse] = useState(false);
   const [previewIssue, setPreviewIssue] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState(false);
@@ -1491,6 +1492,11 @@ function PreviewScreen({
         audio.currentTime = bounded % Math.max(1, audio.duration || previewDuration);
       } catch {}
     }
+    const v = videoRef.current;
+    const next = sequence[nextIdx];
+    if (v && next?.clip?.kind === "video") {
+      prepareVideoFrame(v, next.cut.in_sec + Math.max(0, bounded - (cutStarts[nextIdx] ?? 0))).catch(() => undefined);
+    }
   }, [cutStarts, previewDuration, sequence]);
 
   const enableAudioGraph = useCallback(async () => {
@@ -1501,6 +1507,7 @@ function PreviewScreen({
       const audio = audioRef.current;
       if (!audio) return;
       const ctx = new AudioCtor();
+      await ctx.resume().catch(() => undefined);
       const source = ctx.createMediaElementSource(audio);
       const lowShelf = ctx.createBiquadFilter();
       const compressor = ctx.createDynamicsCompressor();
@@ -1511,7 +1518,7 @@ function PreviewScreen({
       compressor.threshold.value = -18;
       compressor.knee.value = 24;
       compressor.ratio.value = 3;
-      gain.gain.value = 0.86;
+      gain.gain.value = 0.96;
       source.connect(lowShelf);
       lowShelf.connect(compressor);
       compressor.connect(gain);
@@ -1543,14 +1550,15 @@ function PreviewScreen({
       if (v) {
         v.muted = true;
         v.playsInline = true;
-        v.preload = "auto";
-        try {
-          const duration = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : current.cut.out_sec;
-          v.currentTime = Math.min(current.cut.in_sec, Math.max(0, duration - 0.1));
-        } catch {}
-        if (playing) v.play().then(() => setMediaReady(true)).catch(() => {
-          setPlaying(false);
-          setPreviewIssue("Tap Play to start preview on this device.");
+        prepareVideoFrame(v, current.cut.in_sec).then(() => {
+          setMediaReady(true);
+          if (playing) v.play().catch(() => {
+            setPlaying(false);
+            setPreviewIssue("Tap Play to start preview on this device.");
+          });
+        }).catch(() => {
+          setMediaReady(true);
+          setPreviewIssue("This device decoded the clip slowly, so Smart Reel kept the preview moving with a safe frame.");
         });
       }
     }
@@ -1593,7 +1601,10 @@ function PreviewScreen({
       if (a) {
         if (next) {
           setAudioEnabled(true);
-          enableAudioGraph().finally(() => a.play().catch(() => setPreviewIssue("Tap the preview once to enable song audio.")));
+          enableAudioGraph().finally(() => a.play().then(() => setNeedsAudioTap(false)).catch(() => {
+            setNeedsAudioTap(true);
+            setPreviewIssue("Tap the preview once to enable song audio.");
+          }));
         }
         else a.pause();
       }
@@ -1610,7 +1621,13 @@ function PreviewScreen({
     const remaining = previewDuration - elapsed;
     const fadeGain = Math.min(1, elapsed / fadeIn, remaining / fadeOut);
     a.volume = Math.max(0.18, Math.min(0.9, 0.86 * fadeGain));
-    if (playing) a.play().then(() => setAudioEnabled(true)).catch(() => setAudioEnabled(false));
+    if (playing) a.play().then(() => {
+      setAudioEnabled(true);
+      setNeedsAudioTap(false);
+    }).catch(() => {
+      setAudioEnabled(false);
+      setNeedsAudioTap(true);
+    });
     else a.pause();
   }, [playing, song, elapsed, previewDuration, plan.music.audio_mix]);
 
