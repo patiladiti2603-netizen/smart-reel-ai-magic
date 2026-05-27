@@ -146,7 +146,7 @@ const getRecommendedSongs = (category: string, selected: Record<string, string[]
     if (musicPicks.has("Romantic Marathi Songs") && /Romantic|Wedding|Couple/.test(song.category)) return true;
     if (musicPicks.has("Viral Instagram Audio") && song.category === "Instagram Reel") return true;
     if (stylePicks.has("Travel Cinematic") && song.category === "Travel") return true;
-    return scored.find((x) => x.song.title === song.title)?.score >= 5;
+    return (scored.find((x) => x.song.title === song.title)?.score ?? 0) >= 5;
   });
   const ranked = matches.length ? matches : SONG_LIBRARY.filter((song) => ["Instagram Reel", "Wedding", "Travel"].includes(song.category));
   return Array.from(new Map(ranked.map((song) => [song.title, song])).values()).slice(0, 4);
