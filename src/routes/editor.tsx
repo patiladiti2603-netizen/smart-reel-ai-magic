@@ -1449,6 +1449,7 @@ function PreviewScreen({
   const imageTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const synthCleanupRef = useRef<(() => void) | null>(null);
   const beatTimerRef = useRef<number | null>(null);
 
   // Match cuts to actual uploaded clips by name (fall back to round-robin)
@@ -1550,6 +1551,57 @@ function PreviewScreen({
       // If a browser blocks WebAudio routing, keep normal audio playback working.
     }
   }, [song]);
+
+  const stopAiSongBed = useCallback(() => {
+    synthCleanupRef.current?.();
+    synthCleanupRef.current = null;
+  }, []);
+
+  const startAiSongBed = useCallback(async () => {
+    if (typeof window === "undefined" || song || synthCleanupRef.current) return;
+    const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtor) return;
+    const ctx = new AudioCtor();
+    await ctx.resume().catch(() => undefined);
+    const master = ctx.createGain();
+    const bass = ctx.createBiquadFilter();
+    const compressor = ctx.createDynamicsCompressor();
+    bass.type = "lowshelf";
+    bass.frequency.value = 115;
+    bass.gain.value = 6;
+    compressor.threshold.value = -20;
+    compressor.ratio.value = 3;
+    master.gain.value = 0.18;
+    bass.connect(compressor);
+    compressor.connect(master);
+    master.connect(ctx.destination);
+    const step = 60 / Math.max(70, plan.music.bpm_estimate || 100);
+    const schedule = () => {
+      const now = ctx.currentTime;
+      for (let i = 0; i < 12; i += 1) {
+        const at = now + i * step;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = i % 4 === 0 ? "sawtooth" : "triangle";
+        osc.frequency.value = i % 4 === 0 ? 92 : 185 + (i % 3) * 35;
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.linearRampToValueAtTime(i % 4 === 0 ? 0.34 : 0.13, at + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.2);
+        osc.connect(gain);
+        gain.connect(bass);
+        osc.start(at);
+        osc.stop(at + 0.22);
+      }
+    };
+    schedule();
+    const timer = window.setInterval(schedule, step * 8 * 1000);
+    synthCleanupRef.current = () => {
+      window.clearInterval(timer);
+      ctx.close().catch(() => undefined);
+    };
+    setAudioEnabled(true);
+    setNeedsAudioTap(false);
+  }, [plan.music.bpm_estimate, song]);
 
   // playback control
   useEffect(() => {
