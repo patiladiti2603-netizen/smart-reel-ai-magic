@@ -120,21 +120,36 @@ const SONG_LIBRARY: RecommendedSong[] = [
   { title: "YouTube Cinematic Rise", vibe: "Wide cinematic intro, build-up, smooth creator montage", bpm: 104, category: "YouTube", previewTone: "cinematic-rise" },
 ];
 
-const getRecommendedSongs = (category: string, selected: Record<string, string[]>, qualityMode: string): RecommendedSong[] => {
+const getRecommendedSongs = (category: string, selected: Record<string, string[]>, qualityMode: string, clips: ClipMeta[] = [], reference = "", instructions = ""): RecommendedSong[] => {
   const musicPicks = new Set(selected.music ?? []);
   const stylePicks = new Set(selected.style ?? []);
-  const matches = SONG_LIBRARY.filter((song) => {
+  const context = `${category} ${reference} ${instructions} ${clips.map((c) => `${c.name} ${c.description}`).join(" ")}`.toLowerCase();
+  const scored = SONG_LIBRARY.map((song) => {
+    let score = song.category === category ? 8 : song.category === "Instagram Reel" ? 2 : 0;
+    if (category.includes("Wedding") && song.category === "Wedding") score += 7;
+    if (/couple|romantic|love|prewedding|engagement/.test(context) && /romantic|wedding|couple|emotional/.test(`${song.title} ${song.vibe}`.toLowerCase())) score += 5;
+    if (/haldi|mehendi|dance|dhol|celebration/.test(context) && /haldi|dhol|folk|energetic/.test(`${song.title} ${song.vibe}`.toLowerCase())) score += 5;
+    if (/birthday|party|cake|friends/.test(context) && /party|happy|upbeat/.test(`${song.title} ${song.vibe}`.toLowerCase())) score += 5;
+    if (/travel|trip|road|walking|mountain|beach/.test(context) && /travel|chill|cinematic/.test(`${song.title} ${song.vibe}`.toLowerCase())) score += 5;
+    if (musicPicks.has("Party Beats") && song.previewTone.includes("party")) score += 4;
+    if (musicPicks.has("Romantic Marathi Songs") && /Romantic|Wedding|Couple/.test(song.category)) score += 4;
+    if (musicPicks.has("Viral Instagram Audio") && song.category === "Instagram Reel") score += 5;
+    if (stylePicks.has("Travel Cinematic") && song.category === "Travel") score += 4;
+    if (qualityMode.includes("Viral") && song.bpm >= 124) score += 4;
+    if (qualityMode.includes("Wedding") && song.bpm <= 92) score += 4;
+    return { song, score };
+  }).sort((a, b) => b.score - a.score || (qualityMode.includes("Viral") ? b.song.bpm - a.song.bpm : a.song.bpm - b.song.bpm));
+  const matches = scored.filter((x) => x.score > 0).map((x) => x.song).filter((song) => {
     if (song.category === category || song.category === "Instagram Reel") return true;
     if (category.includes("Wedding") && song.category === "Wedding") return true;
     if (musicPicks.has("Party Beats") && song.previewTone.includes("party")) return true;
     if (musicPicks.has("Romantic Marathi Songs") && /Romantic|Wedding|Couple/.test(song.category)) return true;
     if (musicPicks.has("Viral Instagram Audio") && song.category === "Instagram Reel") return true;
     if (stylePicks.has("Travel Cinematic") && song.category === "Travel") return true;
-    return false;
+    return scored.find((x) => x.song.title === song.title)?.score >= 5;
   });
   const ranked = matches.length ? matches : SONG_LIBRARY.filter((song) => ["Instagram Reel", "Wedding", "Travel"].includes(song.category));
-  const preferred = qualityMode.includes("Viral") ? [...ranked].sort((a, b) => b.bpm - a.bpm) : ranked;
-  return preferred.slice(0, 4);
+  return Array.from(new Map(ranked.map((song) => [song.title, song])).values()).slice(0, 4);
 };
 
 type OptionGroup = { key: string; title: string; options: string[] };
