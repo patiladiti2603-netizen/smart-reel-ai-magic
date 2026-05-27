@@ -1265,7 +1265,11 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
         osc.start(audioCtx.currentTime + t);
         osc.stop(audioCtx.currentTime + t + 0.2);
       }
-      stopSynth = () => pad.stop();
+      stopSynth = () => {
+        try {
+          pad.stop();
+        } catch {}
+      };
     }
     bass.connect(compressor);
     compressor.connect(gain);
