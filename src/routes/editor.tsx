@@ -333,8 +333,15 @@ function Editor() {
   const totalSelected = Object.values(selected).reduce((n, arr) => n + arr.length, 0);
 
   const recommendedSongs = useMemo(
-    () => getRecommendedSongs(category, selected, qualityMode, clipMetas, reference, instructions),
-    [category, selected, qualityMode, clipMetas, reference, instructions],
+    () => getRecommendedSongs(
+      category,
+      selected,
+      qualityMode,
+      clips.map((c) => ({ name: c.name, description: c.kind === "video" ? "video clip" : "photo", duration_sec: c.duration })),
+      reference,
+      instructions,
+    ),
+    [category, selected, qualityMode, clips, reference, instructions],
   );
 
   const previewRecommendedSong = (rec: RecommendedSong) => {
