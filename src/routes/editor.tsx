@@ -1218,8 +1218,10 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
   const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   let audioCtx: AudioContext | null = null;
   let audioEl: HTMLAudioElement | null = null;
+  let stopSynth: (() => void) | null = null;
   if (AudioCtor) {
     audioCtx = new AudioCtor();
+    await audioCtx.resume().catch(() => undefined);
     const destination = audioCtx.createMediaStreamDestination();
     const gain = audioCtx.createGain();
     const bass = audioCtx.createBiquadFilter();
@@ -1233,28 +1235,37 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
 
     if (song) {
       audioEl = new Audio(song.url);
-      audioEl.crossOrigin = "anonymous";
       audioEl.loop = true;
       audioEl.volume = 0.9;
+      audioEl.currentTime = 0;
       const source = audioCtx.createMediaElementSource(audioEl);
       source.connect(bass);
     } else {
-      const osc = audioCtx.createOscillator();
-      const pulse = audioCtx.createGain();
-      osc.type = "sawtooth";
-      osc.frequency.value = 96;
-      pulse.gain.value = 0.0001;
       const step = 60 / Math.max(70, plan.music.bpm_estimate || 100);
       const duration = Math.max(8, plan.project.target_duration_sec);
+      const pad = audioCtx.createOscillator();
+      const padGain = audioCtx.createGain();
+      pad.type = "triangle";
+      pad.frequency.value = 164;
+      padGain.gain.value = 0.025;
+      pad.connect(padGain);
+      padGain.connect(bass);
+      pad.start();
+      pad.stop(audioCtx.currentTime + duration + 0.2);
       for (let t = 0; t < duration; t += step) {
+        const osc = audioCtx.createOscillator();
+        const pulse = audioCtx.createGain();
+        osc.type = Math.round(t / step) % 4 === 0 ? "sawtooth" : "sine";
+        osc.frequency.value = Math.round(t / step) % 4 === 0 ? 92 : 220;
         pulse.gain.setValueAtTime(0.0001, audioCtx.currentTime + t);
         pulse.gain.linearRampToValueAtTime(0.22, audioCtx.currentTime + t + 0.025);
         pulse.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + t + 0.18);
+        osc.connect(pulse);
+        pulse.connect(bass);
+        osc.start(audioCtx.currentTime + t);
+        osc.stop(audioCtx.currentTime + t + 0.2);
       }
-      osc.connect(pulse);
-      pulse.connect(bass);
-      osc.start();
-      osc.stop(audioCtx.currentTime + duration + 0.2);
+      stopSynth = () => pad.stop();
     }
     bass.connect(compressor);
     compressor.connect(gain);
@@ -1309,7 +1320,11 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
   });
 
   recorder.start(250);
-  if (audioEl) await audioEl.play().catch(() => undefined);
+  if (audioEl) {
+    await audioEl.play().catch(() => {
+      onProgress("Browser blocked song start; exporting video frames with the prepared audio track.");
+    });
+  }
 
   const filter = colorGradeFilter(plan.style.color_grade);
   let renderedSec = 0;
@@ -1324,18 +1339,22 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
       video.muted = true;
       video.playsInline = true;
       video.preload = "auto";
-      await new Promise<void>((resolve) => {
-        video.onloadedmetadata = () => resolve();
-        video.onerror = () => resolve();
-      });
-      try { video.currentTime = Math.min(cut.in_sec, Math.max(0, (video.duration || cut.out_sec) - 0.1)); } catch {}
+      await prepareVideoFrame(video, cut.in_sec).catch(() => undefined);
       await video.play().catch(() => undefined);
       const start = window.performance.now();
       while (window.performance.now() - start < durationMs) {
         ctx.fillStyle = "#07050f";
         ctx.fillRect(0, 0, width, height);
         ctx.filter = filter;
-        drawCover(video);
+        if (video.readyState >= 2 && video.videoWidth > 0) drawCover(video);
+        else {
+          ctx.filter = "none";
+          ctx.fillStyle = "#16091f";
+          ctx.fillRect(0, 0, width, height);
+          ctx.fillStyle = "rgba(255,255,255,0.82)";
+          ctx.font = "24px Inter, Arial, sans-serif";
+          ctx.fillText(clip.name.slice(0, 46), 48, height / 2);
+        }
         drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
         await new Promise((resolve) => window.requestAnimationFrame(resolve));
       }
@@ -1360,6 +1379,7 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
 
   recorder.stop();
   audioEl?.pause();
+  stopSynth?.();
   const blob = await recordDone;
   await audioCtx?.close().catch(() => undefined);
   const url = URL.createObjectURL(blob);
