@@ -91,8 +91,8 @@ const SYSTEM_PROMPT = `You are Smart Reel, an elite AI cinematic video editor pr
 
 ABSOLUTE RULES:
 - SINGLE SONG ONLY. Pick ONE song (or use selected_song if provided) and use it for the ENTIRE reel. NEVER suggest a different song for different clips. Set music.selected_song to the exact chosen track. The 3 song_suggestions are alternatives the user could swap to, but only ONE is active — list the active selected_song first.
-- BEAT SYNC. Pick a specific BPM (70-160) and set music.beat_sync=true. Generate music.beat_markers covering the whole target duration using spacing = 60/bpm, and music.bass_drops for 3-6 hero moments. Every timeline cut MUST land on beat_markers or clean half-beats. Hero cuts land exactly on bass_drops.
-- AUDIO MIX. Always return music.audio_mix with volume_balance, fade_in_sec, fade_out_sec and bass_enhancement. Mix like a cinematic editor: audible song, clean fade in/out, bass lift on transitions, no silent export.
+- BEAT SYNC. Pick a specific BPM (70-160) and set music.beat_sync=true. Generate music.beat_markers covering the whole target duration using spacing = 60/bpm, and music.bass_drops for 3-6 hero moments. Every timeline cut MUST land on beat_markers or clean half-beats. Hero cuts land exactly on bass_drops. Treat this like an auto beat cut engine, not a loose suggestion.
+- AUDIO MIX. Always return music.audio_mix with volume_balance, fade_in_sec, fade_out_sec and bass_enhancement. Mix like a cinematic editor: audible song, clean fade in/out, bass lift on transitions, no silent export. Song audio must be the dominant bed; source clip audio is ducked below it.
 - HOOK in first 1.5s with the strongest clip + punchy transition.
 - End on an emotional or punchy beat, never a soft fade.
 
@@ -108,7 +108,7 @@ CINEMATIC EDITING — never just "join clips". Use SPECIFIC trending effects per
 
 CLIP UNDERSTANDING — infer emotion/scene from the clip name and description (romantic moments, dance clips, emotional scenes, smiling faces, group celebration, selfie clips, travel shots, walking shots, fast action scenes, wedding highlights, haldi moments, birthday moments) and choose pacing, transitions, color grade, speed ramps, song timing and text accordingly.
 
-REFERENCE MATCHING — when a reference reel/photo is mentioned, DEEPLY mirror clip timing, transition timing, effect intensity, music pacing, text style, color grading, camera movement, reel energy and emotional vibe. Recreate a visually close cinematic feel, pacing, transition style and editing rhythm using ONLY the user's clips. Put detailed match analysis in style.reference_match_notes (2-3 sentences).
+REFERENCE MATCHING — when a reference reel/photo is mentioned, DEEPLY mirror clip timing, transition timing, effect intensity, music pacing, text style, color grading, camera movement, reel energy and emotional vibe. Recreate a visually close cinematic feel, pacing, transition style and editing rhythm using ONLY the user's clips. Put detailed match analysis in style.reference_match_notes (2-3 sentences) with exact decisions: cut length range, transition vocabulary, grade, text treatment and motion intensity.
 
 SMART SONG SELECTION:
 - Wedding/Couple: romantic cinematic Marathi/Hindi, emotional slow BPM, warm premium feel.
@@ -133,7 +133,11 @@ CATEGORY DEFAULTS:
 OUTPUT RULES:
 - Only reference clip_ref values from the provided clip list. Never invent clips.
 - Best/most cinematic clips FIRST in timeline (the hook).
+- Timeline in_sec/out_sec must describe the rendered reel timeline in seconds. Keep cuts short enough to feel edited: viral 0.45-0.9s, cinematic 0.9-1.8s, wedding hero shots 1.6-2.8s.
 - Put 1-sentence summary of why the edit will feel trending in notes_for_creator. If captions are disabled, mention it.`;
+
+const TRENDING_TRANSITIONS = ["whip pan left", "zoom punch in", "motion blur swipe", "flash cut", "velocity edit", "light leak wipe", "match cut on movement", "shake transition", "speed ramp"];
+const CINEMATIC_EFFECTS = ["motion blur + cinematic zoom", "slow-mo hero with film grain", "speed ramp with glow", "lens flare flash", "parallax push", "camera shake bass hit", "face-detail punch-in", "golden hour glow", "viral velocity cut"];
 
 const normalizePlan = (plan: z.infer<typeof EditPlanSchema>, selectedSong: string): z.infer<typeof EditPlanSchema> => {
   const targetDuration = Math.max(8, Math.min(plan.project.target_duration_sec || 20, 45));
@@ -149,6 +153,24 @@ const normalizePlan = (plan: z.infer<typeof EditPlanSchema>, selectedSong: strin
   const selected = selectedSong && selectedSong !== "AI choose best single song"
     ? selectedSong
     : plan.music.selected_song || plan.music.song_suggestions[0] || "AI-selected cinematic single track";
+
+  let cursor = 0;
+  const normalizedTimeline = plan.timeline.map((cut, index) => {
+    const requested = Math.max(0.45, Math.min(cut.out_sec - cut.in_sec || beatStep * 2, targetDuration - cursor));
+    const duration = Number(Math.max(0.45, Math.min(requested, beatStep * (plan.project.category.includes("Wedding") ? 4 : 2))).toFixed(2));
+    const start = Number(cursor.toFixed(2));
+    const end = Number(Math.min(targetDuration, cursor + duration).toFixed(2));
+    cursor = end;
+    return {
+      ...cut,
+      index,
+      in_sec: start,
+      out_sec: end,
+      speed: cut.speed || (index % 5 === 0 ? 0.65 : index % 3 === 0 ? 1.5 : 1),
+      transition_in: cut.transition_in && !/fade$/i.test(cut.transition_in) ? cut.transition_in : TRENDING_TRANSITIONS[index % TRENDING_TRANSITIONS.length],
+      effect: cut.effect && cut.effect.length > 4 ? cut.effect : CINEMATIC_EFFECTS[index % CINEMATIC_EFFECTS.length],
+    };
+  }).filter((cut) => cut.out_sec > cut.in_sec && cut.in_sec < targetDuration);
 
   return {
     ...plan,
@@ -168,6 +190,7 @@ const normalizePlan = (plan: z.infer<typeof EditPlanSchema>, selectedSong: strin
         bass_enhancement: "Gentle low-shelf boost on bass drops and transitions",
       },
     },
+    timeline: normalizedTimeline,
   };
 };
 

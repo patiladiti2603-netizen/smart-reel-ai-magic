@@ -120,21 +120,36 @@ const SONG_LIBRARY: RecommendedSong[] = [
   { title: "YouTube Cinematic Rise", vibe: "Wide cinematic intro, build-up, smooth creator montage", bpm: 104, category: "YouTube", previewTone: "cinematic-rise" },
 ];
 
-const getRecommendedSongs = (category: string, selected: Record<string, string[]>, qualityMode: string): RecommendedSong[] => {
+const getRecommendedSongs = (category: string, selected: Record<string, string[]>, qualityMode: string, clips: ClipMeta[] = [], reference = "", instructions = ""): RecommendedSong[] => {
   const musicPicks = new Set(selected.music ?? []);
   const stylePicks = new Set(selected.style ?? []);
-  const matches = SONG_LIBRARY.filter((song) => {
+  const context = `${category} ${reference} ${instructions} ${clips.map((c) => `${c.name} ${c.description}`).join(" ")}`.toLowerCase();
+  const scored = SONG_LIBRARY.map((song) => {
+    let score = song.category === category ? 8 : song.category === "Instagram Reel" ? 2 : 0;
+    if (category.includes("Wedding") && song.category === "Wedding") score += 7;
+    if (/couple|romantic|love|prewedding|engagement/.test(context) && /romantic|wedding|couple|emotional/.test(`${song.title} ${song.vibe}`.toLowerCase())) score += 5;
+    if (/haldi|mehendi|dance|dhol|celebration/.test(context) && /haldi|dhol|folk|energetic/.test(`${song.title} ${song.vibe}`.toLowerCase())) score += 5;
+    if (/birthday|party|cake|friends/.test(context) && /party|happy|upbeat/.test(`${song.title} ${song.vibe}`.toLowerCase())) score += 5;
+    if (/travel|trip|road|walking|mountain|beach/.test(context) && /travel|chill|cinematic/.test(`${song.title} ${song.vibe}`.toLowerCase())) score += 5;
+    if (musicPicks.has("Party Beats") && song.previewTone.includes("party")) score += 4;
+    if (musicPicks.has("Romantic Marathi Songs") && /Romantic|Wedding|Couple/.test(song.category)) score += 4;
+    if (musicPicks.has("Viral Instagram Audio") && song.category === "Instagram Reel") score += 5;
+    if (stylePicks.has("Travel Cinematic") && song.category === "Travel") score += 4;
+    if (qualityMode.includes("Viral") && song.bpm >= 124) score += 4;
+    if (qualityMode.includes("Wedding") && song.bpm <= 92) score += 4;
+    return { song, score };
+  }).sort((a, b) => b.score - a.score || (qualityMode.includes("Viral") ? b.song.bpm - a.song.bpm : a.song.bpm - b.song.bpm));
+  const matches = scored.filter((x) => x.score > 0).map((x) => x.song).filter((song) => {
     if (song.category === category || song.category === "Instagram Reel") return true;
     if (category.includes("Wedding") && song.category === "Wedding") return true;
     if (musicPicks.has("Party Beats") && song.previewTone.includes("party")) return true;
     if (musicPicks.has("Romantic Marathi Songs") && /Romantic|Wedding|Couple/.test(song.category)) return true;
     if (musicPicks.has("Viral Instagram Audio") && song.category === "Instagram Reel") return true;
     if (stylePicks.has("Travel Cinematic") && song.category === "Travel") return true;
-    return false;
+    return (scored.find((x) => x.song.title === song.title)?.score ?? 0) >= 5;
   });
   const ranked = matches.length ? matches : SONG_LIBRARY.filter((song) => ["Instagram Reel", "Wedding", "Travel"].includes(song.category));
-  const preferred = qualityMode.includes("Viral") ? [...ranked].sort((a, b) => b.bpm - a.bpm) : ranked;
-  return preferred.slice(0, 4);
+  return Array.from(new Map(ranked.map((song) => [song.title, song])).values()).slice(0, 4);
 };
 
 type OptionGroup = { key: string; title: string; options: string[] };
@@ -174,6 +189,39 @@ const colorGradeFilter = (grade: string): string => {
   if (g.includes("vibrant")) return "saturate(1.4) contrast(1.1)";
   if (g.includes("instagram")) return "saturate(1.15) contrast(1.05) brightness(1.03)";
   return "saturate(1.1) contrast(1.05)";
+};
+
+const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+const waitForEvent = (target: EventTarget, events: string[], timeout = 1600) =>
+  new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      events.forEach((event) => target.removeEventListener(event, finish));
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const timer = window.setTimeout(finish, timeout);
+    events.forEach((event) => target.addEventListener(event, finish, { once: true }));
+  });
+
+const prepareVideoFrame = async (video: HTMLVideoElement, targetSec: number) => {
+  video.preload = "auto";
+  video.muted = true;
+  video.playsInline = true;
+  video.load();
+  if (video.readyState < 1) await waitForEvent(video, ["loadedmetadata", "loadeddata", "canplay"]);
+  const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : targetSec + 1;
+  const safeTime = Math.max(0, Math.min(targetSec, Math.max(0, duration - 0.12)));
+  try {
+    video.currentTime = safeTime;
+  } catch {}
+  await waitForEvent(video, ["seeked", "loadeddata", "canplay"], 1200);
+  if (video.readyState < 2) await waitForEvent(video, ["loadeddata", "canplay"], 1200);
+  const frameCallback = (video as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }).requestVideoFrameCallback;
+  if (frameCallback) await new Promise<void>((resolve) => frameCallback.call(video, () => resolve()));
 };
 
 function Editor() {
@@ -285,8 +333,15 @@ function Editor() {
   const totalSelected = Object.values(selected).reduce((n, arr) => n + arr.length, 0);
 
   const recommendedSongs = useMemo(
-    () => getRecommendedSongs(category, selected, qualityMode),
-    [category, selected, qualityMode],
+    () => getRecommendedSongs(
+      category,
+      selected,
+      qualityMode,
+      clips.map((c) => ({ name: c.name, description: c.kind === "video" ? "video clip" : "photo", duration_sec: c.duration })),
+      reference,
+      instructions,
+    ),
+    [category, selected, qualityMode, clips, reference, instructions],
   );
 
   const previewRecommendedSong = (rec: RecommendedSong) => {
@@ -1185,8 +1240,10 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
   const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   let audioCtx: AudioContext | null = null;
   let audioEl: HTMLAudioElement | null = null;
+  let stopSynth: (() => void) | null = null;
   if (AudioCtor) {
     audioCtx = new AudioCtor();
+    await audioCtx.resume().catch(() => undefined);
     const destination = audioCtx.createMediaStreamDestination();
     const gain = audioCtx.createGain();
     const bass = audioCtx.createBiquadFilter();
@@ -1200,28 +1257,41 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
 
     if (song) {
       audioEl = new Audio(song.url);
-      audioEl.crossOrigin = "anonymous";
       audioEl.loop = true;
       audioEl.volume = 0.9;
+      audioEl.currentTime = 0;
       const source = audioCtx.createMediaElementSource(audioEl);
       source.connect(bass);
     } else {
-      const osc = audioCtx.createOscillator();
-      const pulse = audioCtx.createGain();
-      osc.type = "sawtooth";
-      osc.frequency.value = 96;
-      pulse.gain.value = 0.0001;
       const step = 60 / Math.max(70, plan.music.bpm_estimate || 100);
       const duration = Math.max(8, plan.project.target_duration_sec);
+      const pad = audioCtx.createOscillator();
+      const padGain = audioCtx.createGain();
+      pad.type = "triangle";
+      pad.frequency.value = 164;
+      padGain.gain.value = 0.025;
+      pad.connect(padGain);
+      padGain.connect(bass);
+      pad.start();
+      pad.stop(audioCtx.currentTime + duration + 0.2);
       for (let t = 0; t < duration; t += step) {
+        const osc = audioCtx.createOscillator();
+        const pulse = audioCtx.createGain();
+        osc.type = Math.round(t / step) % 4 === 0 ? "sawtooth" : "sine";
+        osc.frequency.value = Math.round(t / step) % 4 === 0 ? 92 : 220;
         pulse.gain.setValueAtTime(0.0001, audioCtx.currentTime + t);
         pulse.gain.linearRampToValueAtTime(0.22, audioCtx.currentTime + t + 0.025);
         pulse.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + t + 0.18);
+        osc.connect(pulse);
+        pulse.connect(bass);
+        osc.start(audioCtx.currentTime + t);
+        osc.stop(audioCtx.currentTime + t + 0.2);
       }
-      osc.connect(pulse);
-      pulse.connect(bass);
-      osc.start();
-      osc.stop(audioCtx.currentTime + duration + 0.2);
+      stopSynth = () => {
+        try {
+          pad.stop();
+        } catch {}
+      };
     }
     bass.connect(compressor);
     compressor.connect(gain);
@@ -1276,7 +1346,11 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
   });
 
   recorder.start(250);
-  if (audioEl) await audioEl.play().catch(() => undefined);
+  if (audioEl) {
+    await audioEl.play().catch(() => {
+      onProgress("Browser blocked song start; exporting video frames with the prepared audio track.");
+    });
+  }
 
   const filter = colorGradeFilter(plan.style.color_grade);
   let renderedSec = 0;
@@ -1291,18 +1365,22 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
       video.muted = true;
       video.playsInline = true;
       video.preload = "auto";
-      await new Promise<void>((resolve) => {
-        video.onloadedmetadata = () => resolve();
-        video.onerror = () => resolve();
-      });
-      try { video.currentTime = Math.min(cut.in_sec, Math.max(0, (video.duration || cut.out_sec) - 0.1)); } catch {}
+      await prepareVideoFrame(video, cut.in_sec).catch(() => undefined);
       await video.play().catch(() => undefined);
       const start = window.performance.now();
       while (window.performance.now() - start < durationMs) {
         ctx.fillStyle = "#07050f";
         ctx.fillRect(0, 0, width, height);
         ctx.filter = filter;
-        drawCover(video);
+        if (video.readyState >= 2 && video.videoWidth > 0) drawCover(video);
+        else {
+          ctx.filter = "none";
+          ctx.fillStyle = "#16091f";
+          ctx.fillRect(0, 0, width, height);
+          ctx.fillStyle = "rgba(255,255,255,0.82)";
+          ctx.font = "24px Inter, Arial, sans-serif";
+          ctx.fillText(clip.name.slice(0, 46), 48, height / 2);
+        }
         drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
         await new Promise((resolve) => window.requestAnimationFrame(resolve));
       }
@@ -1327,6 +1405,7 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
 
   recorder.stop();
   audioEl?.pause();
+  stopSynth?.();
   const blob = await recordDone;
   await audioCtx?.close().catch(() => undefined);
   const url = URL.createObjectURL(blob);
@@ -1360,6 +1439,7 @@ function PreviewScreen({
   const [elapsed, setElapsed] = useState(0);
   const [mediaReady, setMediaReady] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(false);
+  const [needsAudioTap, setNeedsAudioTap] = useState(Boolean(song));
   const [beatPulse, setBeatPulse] = useState(false);
   const [previewIssue, setPreviewIssue] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState(false);
@@ -1369,6 +1449,7 @@ function PreviewScreen({
   const imageTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const synthCleanupRef = useRef<(() => void) | null>(null);
   const beatTimerRef = useRef<number | null>(null);
 
   // Match cuts to actual uploaded clips by name (fall back to round-robin)
@@ -1434,6 +1515,11 @@ function PreviewScreen({
         audio.currentTime = bounded % Math.max(1, audio.duration || previewDuration);
       } catch {}
     }
+    const v = videoRef.current;
+    const next = sequence[nextIdx];
+    if (v && next?.clip?.kind === "video") {
+      prepareVideoFrame(v, next.cut.in_sec + Math.max(0, bounded - (cutStarts[nextIdx] ?? 0))).catch(() => undefined);
+    }
   }, [cutStarts, previewDuration, sequence]);
 
   const enableAudioGraph = useCallback(async () => {
@@ -1444,6 +1530,7 @@ function PreviewScreen({
       const audio = audioRef.current;
       if (!audio) return;
       const ctx = new AudioCtor();
+      await ctx.resume().catch(() => undefined);
       const source = ctx.createMediaElementSource(audio);
       const lowShelf = ctx.createBiquadFilter();
       const compressor = ctx.createDynamicsCompressor();
@@ -1454,7 +1541,7 @@ function PreviewScreen({
       compressor.threshold.value = -18;
       compressor.knee.value = 24;
       compressor.ratio.value = 3;
-      gain.gain.value = 0.86;
+      gain.gain.value = 0.96;
       source.connect(lowShelf);
       lowShelf.connect(compressor);
       compressor.connect(gain);
@@ -1464,6 +1551,57 @@ function PreviewScreen({
       // If a browser blocks WebAudio routing, keep normal audio playback working.
     }
   }, [song]);
+
+  const stopAiSongBed = useCallback(() => {
+    synthCleanupRef.current?.();
+    synthCleanupRef.current = null;
+  }, []);
+
+  const startAiSongBed = useCallback(async () => {
+    if (typeof window === "undefined" || song || synthCleanupRef.current) return;
+    const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtor) return;
+    const ctx = new AudioCtor();
+    await ctx.resume().catch(() => undefined);
+    const master = ctx.createGain();
+    const bass = ctx.createBiquadFilter();
+    const compressor = ctx.createDynamicsCompressor();
+    bass.type = "lowshelf";
+    bass.frequency.value = 115;
+    bass.gain.value = 6;
+    compressor.threshold.value = -20;
+    compressor.ratio.value = 3;
+    master.gain.value = 0.18;
+    bass.connect(compressor);
+    compressor.connect(master);
+    master.connect(ctx.destination);
+    const step = 60 / Math.max(70, plan.music.bpm_estimate || 100);
+    const schedule = () => {
+      const now = ctx.currentTime;
+      for (let i = 0; i < 12; i += 1) {
+        const at = now + i * step;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = i % 4 === 0 ? "sawtooth" : "triangle";
+        osc.frequency.value = i % 4 === 0 ? 92 : 185 + (i % 3) * 35;
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.linearRampToValueAtTime(i % 4 === 0 ? 0.34 : 0.13, at + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.2);
+        osc.connect(gain);
+        gain.connect(bass);
+        osc.start(at);
+        osc.stop(at + 0.22);
+      }
+    };
+    schedule();
+    const timer = window.setInterval(schedule, step * 8 * 1000);
+    synthCleanupRef.current = () => {
+      window.clearInterval(timer);
+      ctx.close().catch(() => undefined);
+    };
+    setAudioEnabled(true);
+    setNeedsAudioTap(false);
+  }, [plan.music.bpm_estimate, song]);
 
   // playback control
   useEffect(() => {
@@ -1486,14 +1624,15 @@ function PreviewScreen({
       if (v) {
         v.muted = true;
         v.playsInline = true;
-        v.preload = "auto";
-        try {
-          const duration = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : current.cut.out_sec;
-          v.currentTime = Math.min(current.cut.in_sec, Math.max(0, duration - 0.1));
-        } catch {}
-        if (playing) v.play().then(() => setMediaReady(true)).catch(() => {
-          setPlaying(false);
-          setPreviewIssue("Tap Play to start preview on this device.");
+        prepareVideoFrame(v, current.cut.in_sec).then(() => {
+          setMediaReady(true);
+          if (playing) v.play().catch(() => {
+            setPlaying(false);
+            setPreviewIssue("Tap Play to start preview on this device.");
+          });
+        }).catch(() => {
+          setMediaReady(true);
+          setPreviewIssue("This device decoded the clip slowly, so Smart Reel kept the preview moving with a safe frame.");
         });
       }
     }
@@ -1536,7 +1675,10 @@ function PreviewScreen({
       if (a) {
         if (next) {
           setAudioEnabled(true);
-          enableAudioGraph().finally(() => a.play().catch(() => setPreviewIssue("Tap the preview once to enable song audio.")));
+          enableAudioGraph().finally(() => a.play().then(() => setNeedsAudioTap(false)).catch(() => {
+            setNeedsAudioTap(true);
+            setPreviewIssue("Tap the preview once to enable song audio.");
+          }));
         }
         else a.pause();
       }
@@ -1546,6 +1688,11 @@ function PreviewScreen({
 
   // start/stop song with the reel
   useEffect(() => {
+    if (!song) {
+      if (playing) startAiSongBed();
+      else stopAiSongBed();
+      return () => stopAiSongBed();
+    }
     const a = audioRef.current;
     if (!a) return;
     const fadeIn = Math.max(0.1, plan.music.audio_mix?.fade_in_sec ?? 0.6);
@@ -1553,9 +1700,16 @@ function PreviewScreen({
     const remaining = previewDuration - elapsed;
     const fadeGain = Math.min(1, elapsed / fadeIn, remaining / fadeOut);
     a.volume = Math.max(0.18, Math.min(0.9, 0.86 * fadeGain));
-    if (playing) a.play().then(() => setAudioEnabled(true)).catch(() => setAudioEnabled(false));
+    if (playing) a.play().then(() => {
+      setAudioEnabled(true);
+      setNeedsAudioTap(false);
+    }).catch(() => {
+      setAudioEnabled(false);
+      setNeedsAudioTap(true);
+    });
     else a.pause();
-  }, [playing, song, elapsed, previewDuration, plan.music.audio_mix]);
+    return () => stopAiSongBed();
+  }, [playing, song, elapsed, previewDuration, plan.music.audio_mix, startAiSongBed, stopAiSongBed]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !playing) return;
@@ -1620,7 +1774,13 @@ function PreviewScreen({
         <div
           ref={containerRef}
           onClick={() => {
-            if (song) enableAudioGraph().finally(() => audioRef.current?.play().then(() => setAudioEnabled(true)).catch(() => setAudioEnabled(false)));
+            if (song) enableAudioGraph().finally(() => audioRef.current?.play().then(() => {
+              setAudioEnabled(true);
+              setNeedsAudioTap(false);
+            }).catch(() => {
+              setAudioEnabled(false);
+              setNeedsAudioTap(true);
+            }));
           }}
           className={"relative mx-auto overflow-hidden rounded-xl bg-gradient-to-br from-[#16091f] via-black to-[#071022] sr-grain sr-vignette " + (isPortrait ? "aspect-[9/16] max-w-[280px]" : "aspect-video w-full")}
         >
@@ -1670,6 +1830,12 @@ function PreviewScreen({
 
           {song && (
             <audio ref={audioRef} src={song.url} loop preload="auto" crossOrigin="anonymous" />
+          )}
+
+          {song && needsAudioTap && (
+            <div className="pointer-events-none absolute inset-x-4 top-1/2 z-10 -translate-y-1/2 rounded-xl border border-fuchsia-300/25 bg-black/65 px-4 py-3 text-center text-xs text-white/85 backdrop-blur">
+              Tap preview to enable audible song mix
+            </div>
           )}
 
           {activeText && (
@@ -1730,7 +1896,7 @@ function PreviewScreen({
             >
               {s.clip ? (
                 s.clip.kind === "video" ? (
-                  <video src={s.clip.url} className="h-full w-full object-cover" muted playsInline style={{ filter }} />
+                  <video src={s.clip.url} className="h-full w-full object-cover" muted playsInline preload="metadata" style={{ filter }} />
                 ) : (
                   <img src={s.clip.url} alt="" className="h-full w-full object-cover" style={{ filter }} />
                 )
