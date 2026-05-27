@@ -1688,6 +1688,11 @@ function PreviewScreen({
 
   // start/stop song with the reel
   useEffect(() => {
+    if (!song) {
+      if (playing) startAiSongBed();
+      else stopAiSongBed();
+      return () => stopAiSongBed();
+    }
     const a = audioRef.current;
     if (!a) return;
     const fadeIn = Math.max(0.1, plan.music.audio_mix?.fade_in_sec ?? 0.6);
@@ -1703,7 +1708,8 @@ function PreviewScreen({
       setNeedsAudioTap(true);
     });
     else a.pause();
-  }, [playing, song, elapsed, previewDuration, plan.music.audio_mix]);
+    return () => stopAiSongBed();
+  }, [playing, song, elapsed, previewDuration, plan.music.audio_mix, startAiSongBed, stopAiSongBed]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !playing) return;
