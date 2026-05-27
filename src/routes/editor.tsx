@@ -176,6 +176,39 @@ const colorGradeFilter = (grade: string): string => {
   return "saturate(1.1) contrast(1.05)";
 };
 
+const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+const waitForEvent = (target: EventTarget, events: string[], timeout = 1600) =>
+  new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      events.forEach((event) => target.removeEventListener(event, finish));
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const timer = window.setTimeout(finish, timeout);
+    events.forEach((event) => target.addEventListener(event, finish, { once: true }));
+  });
+
+const prepareVideoFrame = async (video: HTMLVideoElement, targetSec: number) => {
+  video.preload = "auto";
+  video.muted = true;
+  video.playsInline = true;
+  video.load();
+  if (video.readyState < 1) await waitForEvent(video, ["loadedmetadata", "loadeddata", "canplay"]);
+  const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : targetSec + 1;
+  const safeTime = Math.max(0, Math.min(targetSec, Math.max(0, duration - 0.12)));
+  try {
+    video.currentTime = safeTime;
+  } catch {}
+  await waitForEvent(video, ["seeked", "loadeddata", "canplay"], 1200);
+  if (video.readyState < 2) await waitForEvent(video, ["loadeddata", "canplay"], 1200);
+  const frameCallback = (video as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }).requestVideoFrameCallback;
+  if (frameCallback) await new Promise<void>((resolve) => frameCallback.call(video, () => resolve()));
+};
+
 function Editor() {
   const hydrated = useHydrated();
   const [canUseBrowser, setCanUseBrowser] = useState(false);
