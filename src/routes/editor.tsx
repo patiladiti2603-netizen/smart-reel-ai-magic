@@ -1553,6 +1553,8 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
   if (typeof window === "undefined") return;
   const MediaRecorderCtor = window.MediaRecorder;
   if (!MediaRecorderCtor) throw new Error("Playable video export is not supported in this browser.");
+  const usableClips = clips.filter((clip) => clip.decodeStatus !== "invalid" && (clip.kind === "image" || clip.frameVerified || clip.thumbnailUrl));
+  if (usableClips.length === 0 || plan.timeline.length === 0) throw new Error("Video rendering issue detected. Rebuilding cinematic timeline…");
 
   const isPortrait = plan.project.aspect_ratio.includes("9:16") || plan.project.aspect_ratio.includes("9/16");
   const width = isPortrait ? 720 : 1280;
@@ -1564,6 +1566,7 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
   if (!ctx) throw new Error("Could not prepare video renderer.");
 
   const stream = canvas.captureStream(30);
+  if (stream.getVideoTracks().length === 0) throw new Error("Video rendering issue detected. Rebuilding cinematic timeline…");
   const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   let audioCtx: AudioContext | null = null;
   let audioEl: HTMLAudioElement | null = null;
@@ -1633,13 +1636,14 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
     if (event.data.size > 0) chunks.push(event.data);
   };
 
-  const drawCover = (media: CanvasImageSource) => {
-    const sourceWidth = "videoWidth" in media ? media.videoWidth : "naturalWidth" in media ? media.naturalWidth : width;
-    const sourceHeight = "videoHeight" in media ? media.videoHeight : "naturalHeight" in media ? media.naturalHeight : height;
-    const scale = Math.max(width / sourceWidth, height / sourceHeight);
-    const x = (width - sourceWidth * scale) / 2;
-    const y = (height - sourceHeight * scale) / 2;
-    ctx.drawImage(media, x, y, sourceWidth * scale, sourceHeight * scale);
+  const drawCover = (media: CanvasImageSource) => drawMediaCover(ctx, media, width, height);
+
+  const loadPoster = async (clip: LocalClip) => {
+    if (!clip.thumbnailUrl) return null;
+    const image = new Image();
+    image.src = clip.thumbnailUrl;
+    await image.decode().catch(() => undefined);
+    return image.naturalWidth ? image : null;
   };
 
   const drawOverlays = (label: string, caption: string | null, filter: string) => {
