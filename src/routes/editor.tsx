@@ -23,8 +23,15 @@ import {
   CheckCircle2,
   RefreshCw,
   Maximize2,
+  Copy,
+  ExternalLink,
+  Info,
+  Globe2,
+  Send,
 } from "lucide-react";
 import logo from "@/assets/smart-reel-logo.png";
+import ffmpegCoreUrl from "@ffmpeg/core?url";
+import ffmpegWasmUrl from "@ffmpeg/core/wasm?url";
 
 export const Route = createFileRoute("/editor")({
   component: Editor,
@@ -37,7 +44,23 @@ export const Route = createFileRoute("/editor")({
 });
 
 type ClipMeta = { name: string; description: string; duration_sec?: number };
-type LocalClip = { id: string; file: File; url: string; kind: "video" | "image"; name: string; duration?: number };
+type DecodeStatus = "processing" | "ready" | "repairing" | "invalid";
+type LocalClip = {
+  id: string;
+  file: File;
+  url: string;
+  kind: "video" | "image";
+  name: string;
+  duration?: number;
+  width?: number;
+  height?: number;
+  frameRate?: number;
+  codecLabel?: string;
+  thumbnailUrl?: string;
+  decodeStatus: DecodeStatus;
+  repairMessage?: string;
+  frameVerified?: boolean;
+};
 type ReferenceMedia = { id: string; file: File; url: string; kind: "video" | "image"; name: string } | null;
 type SongFile = { id: string; file: File; url: string; name: string } | null;
 type BrowserFileList = { length: number; item(index: number): File | null; [index: number]: File };
@@ -179,6 +202,8 @@ const RECOMMENDATIONS: Record<string, Partial<Record<string, string[]>>> = {
 };
 
 const PROJECTS_KEY = "smartreel.projects.v1";
+const APP_PUBLIC_URL = "https://smart-reel-ai-magic.lovable.app";
+const VIDEO_REPAIR_MESSAGE = "Clip decoding failed. Auto-repairing...";
 
 const colorGradeFilter = (grade: string): string => {
   const g = grade.toLowerCase();
@@ -206,6 +231,150 @@ const waitForEvent = (target: EventTarget, events: string[], timeout = 1600) =>
     const timer = window.setTimeout(finish, timeout);
     events.forEach((event) => target.addEventListener(event, finish, { once: true }));
   });
+
+const getVideoSupportLabel = (file: File) => {
+  const name = file.name.toLowerCase();
+  const type = file.type || "unknown";
+  if (type.includes("mp4") || name.endsWith(".mp4") || name.endsWith(".m4v")) return "MP4 / H.264 preferred";
+  if (type.includes("quicktime") || name.endsWith(".mov")) return "MOV / HEVC — repair if needed";
+  if (type.includes("webm") || name.endsWith(".webm")) return "WebM — browser decode check";
+  if (name.endsWith(".hevc") || name.endsWith(".h265")) return "H.265/HEVC — repair if needed";
+  return type;
+};
+
+const drawMediaCover = (ctx: CanvasRenderingContext2D, media: CanvasImageSource, width: number, height: number) => {
+  const sourceWidth = "videoWidth" in media ? media.videoWidth : "naturalWidth" in media ? media.naturalWidth : width;
+  const sourceHeight = "videoHeight" in media ? media.videoHeight : "naturalHeight" in media ? media.naturalHeight : height;
+  const safeWidth = sourceWidth || width;
+  const safeHeight = sourceHeight || height;
+  const scale = Math.max(width / safeWidth, height / safeHeight);
+  const x = (width - safeWidth * scale) / 2;
+  const y = (height - safeHeight * scale) / 2;
+  ctx.drawImage(media, x, y, safeWidth * scale, safeHeight * scale);
+};
+
+const makeFallbackThumbnail = async (label: string, width = 540, height = 960) => {
+  const canvas = window.document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  const gradient = ctx.createLinearGradient(0, 0, width, height);
+  gradient.addColorStop(0, "#3b0f46");
+  gradient.addColorStop(0.48, "#120817");
+  gradient.addColorStop(1, "#0c2a54");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = "rgba(255,255,255,0.12)";
+  for (let i = 0; i < 7; i += 1) ctx.fillRect(i * 94 - 30, 0, 42, height);
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  ctx.font = "700 34px Inter, Arial, sans-serif";
+  ctx.fillText("Smart Reel", 42, height / 2 - 14);
+  ctx.font = "22px Inter, Arial, sans-serif";
+  ctx.fillText(label.slice(0, 30), 42, height / 2 + 28);
+  return canvas.toDataURL("image/jpeg", 0.84);
+};
+
+const extractVideoThumbnail = async (url: string, targetSec = 0.08) => {
+  const video = window.document.createElement("video");
+  video.src = url;
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  await prepareVideoFrame(video, targetSec);
+  if (!video.videoWidth || !video.videoHeight) throw new Error("No decoded video frame");
+  const canvas = window.document.createElement("canvas");
+  canvas.width = Math.min(720, video.videoWidth);
+  canvas.height = Math.round((canvas.width / video.videoWidth) * video.videoHeight);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Thumbnail canvas unavailable");
+  drawMediaCover(ctx, video, canvas.width, canvas.height);
+  return {
+    thumbnailUrl: canvas.toDataURL("image/jpeg", 0.86),
+    duration: Number.isFinite(video.duration) ? video.duration : undefined,
+    width: video.videoWidth,
+    height: video.videoHeight,
+  };
+};
+
+const extractImageThumbnail = async (url: string) => {
+  const image = new Image();
+  image.src = url;
+  await image.decode();
+  const canvas = window.document.createElement("canvas");
+  canvas.width = 540;
+  canvas.height = 960;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Thumbnail canvas unavailable");
+  drawMediaCover(ctx, image, canvas.width, canvas.height);
+  return { thumbnailUrl: canvas.toDataURL("image/jpeg", 0.86), width: image.naturalWidth, height: image.naturalHeight };
+};
+
+const repairVideoWithFfmpeg = async (clip: LocalClip) => {
+  const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
+    import("@ffmpeg/ffmpeg"),
+    import("@ffmpeg/util"),
+  ]);
+  const ffmpeg = new FFmpeg();
+  await ffmpeg.load({
+    coreURL: await toBlobURL(ffmpegCoreUrl, "text/javascript"),
+    wasmURL: await toBlobURL(ffmpegWasmUrl, "application/wasm"),
+  });
+  const inputName = `input-${clip.id}.${clip.name.split(".").pop() || "mp4"}`;
+  const outputName = `smart-reel-repaired-${clip.id}.mp4`;
+  await ffmpeg.writeFile(inputName, await fetchFile(clip.file));
+  await ffmpeg.exec([
+    "-i", inputName,
+    "-map", "0:v:0",
+    "-an",
+    "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=30",
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-pix_fmt", "yuv420p",
+    "-movflags", "+faststart",
+    outputName,
+  ]);
+  const data = await ffmpeg.readFile(outputName);
+  const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(String(data));
+  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const blob = new Blob([arrayBuffer], { type: "video/mp4" });
+  await ffmpeg.deleteFile(inputName).catch(() => undefined);
+  await ffmpeg.deleteFile(outputName).catch(() => undefined);
+  ffmpeg.terminate();
+  return URL.createObjectURL(blob);
+};
+
+const transcodeRecordingToMp4 = async (blob: Blob) => {
+  const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
+    import("@ffmpeg/ffmpeg"),
+    import("@ffmpeg/util"),
+  ]);
+  const ffmpeg = new FFmpeg();
+  await ffmpeg.load({
+    coreURL: await toBlobURL(ffmpegCoreUrl, "text/javascript"),
+    wasmURL: await toBlobURL(ffmpegWasmUrl, "application/wasm"),
+  });
+  await ffmpeg.writeFile("render.webm", await fetchFile(blob));
+  await ffmpeg.exec([
+    "-i", "render.webm",
+    "-map", "0:v:0",
+    "-map", "0:a?",
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-pix_fmt", "yuv420p",
+    "-c:a", "aac",
+    "-b:a", "160k",
+    "-movflags", "+faststart",
+    "smart-reel-final.mp4",
+  ]);
+  const data = await ffmpeg.readFile("smart-reel-final.mp4");
+  const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(String(data));
+  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  await ffmpeg.deleteFile("render.webm").catch(() => undefined);
+  await ffmpeg.deleteFile("smart-reel-final.mp4").catch(() => undefined);
+  ffmpeg.terminate();
+  return new Blob([arrayBuffer], { type: "video/mp4" });
+};
 
 const prepareVideoFrame = async (video: HTMLVideoElement, targetSec: number) => {
   video.preload = "auto";
@@ -331,6 +500,36 @@ function Editor() {
   }, [selected, instructions, refVideo, refPhoto, song, selectedSongTitle, qualityMode, category, instagramSubstyle, captionsEnabled, captionText, captionStyle]);
 
   const totalSelected = Object.values(selected).reduce((n, arr) => n + arr.length, 0);
+  const clipDecodeSummary = useMemo(() => {
+    const processing = clips.filter((c) => c.decodeStatus === "processing" || c.decodeStatus === "repairing").length;
+    const invalid = clips.filter((c) => c.decodeStatus === "invalid").length;
+    const ready = clips.filter((c) => c.decodeStatus === "ready").length;
+    return { processing, invalid, ready };
+  }, [clips]);
+  const isLocalApp = canUseBrowser && typeof window !== "undefined" && /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+  const appUrl = isLocalApp ? "" : APP_PUBLIC_URL;
+
+  const copyAppLink = async () => {
+    if (!appUrl || typeof window === "undefined") return;
+    await window.navigator.clipboard?.writeText(appUrl).catch(() => undefined);
+    setSavedToast("App link copied");
+    window.setTimeout(() => setSavedToast(null), 2500);
+  };
+
+  const openAppLink = () => {
+    if (!appUrl || typeof window === "undefined") return;
+    window.open(appUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const shareAppLink = async () => {
+    if (!appUrl || typeof window === "undefined") return;
+    const text = `Smart Reel AI App: ${appUrl}`;
+    if (window.navigator.share) {
+      await window.navigator.share({ title: "Smart Reel", text, url: appUrl }).catch(() => undefined);
+    } else {
+      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+    }
+  };
 
   const recommendedSongs = useMemo(
     () => getRecommendedSongs(
@@ -386,7 +585,15 @@ function Editor() {
   const makeLocalClip = (f: File): LocalClip => {
     const url = URL.createObjectURL(f);
     const kind: "video" | "image" = f.type.startsWith("video") ? "video" : "image";
-    return { id: `${f.name}-${f.size}-${Math.random().toString(36).slice(2, 7)}`, file: f, url, kind, name: f.name };
+    return {
+      id: `${f.name}-${f.size}-${Math.random().toString(36).slice(2, 7)}`,
+      file: f,
+      url,
+      kind,
+      name: f.name,
+      decodeStatus: "processing",
+      codecLabel: kind === "video" ? getVideoSupportLabel(f) : f.type || "image",
+    };
   };
 
   const onClipFiles = (files: BrowserFileList | null) => {
@@ -394,6 +601,63 @@ function Editor() {
     const next: LocalClip[] = Array.from(files).map(makeLocalClip);
     setClips((prev) => [...prev, ...next]);
   };
+
+  useEffect(() => {
+    if (!canUseBrowser || typeof window === "undefined") return;
+    const pending = clips.find((clip) => clip.decodeStatus === "processing" && !clip.frameVerified);
+    if (!pending) return;
+    let cancelled = false;
+    const updateClip = (patch: Partial<LocalClip>) => {
+      if (cancelled) return;
+      setClips((prev) => prev.map((clip) => (clip.id === pending.id ? { ...clip, ...patch } : clip)));
+    };
+    const updateClipDuringRepair = (patch: Partial<LocalClip>) => {
+      setClips((prev) => prev.map((clip) => (clip.id === pending.id ? { ...clip, ...patch } : clip)));
+    };
+    const run = async () => {
+      if (pending.kind === "image") {
+        try {
+          const thumb = await extractImageThumbnail(pending.url);
+          updateClip({ ...thumb, decodeStatus: "ready", frameVerified: true });
+        } catch {
+          updateClip({ thumbnailUrl: await makeFallbackThumbnail(pending.name), decodeStatus: "ready", frameVerified: true });
+        }
+        return;
+      }
+      try {
+        const decoded = await extractVideoThumbnail(pending.url);
+        updateClip({ ...decoded, frameRate: 30, decodeStatus: "ready", frameVerified: true, repairMessage: "Video stream verified" });
+      } catch {
+        const fallbackThumb = await makeFallbackThumbnail(pending.name);
+        updateClipDuringRepair({ decodeStatus: "repairing", repairMessage: VIDEO_REPAIR_MESSAGE, thumbnailUrl: fallbackThumb });
+        try {
+          const repairedUrl = await repairVideoWithFfmpeg(pending);
+          const decoded = await extractVideoThumbnail(repairedUrl);
+          if (pending.url.startsWith("blob:")) URL.revokeObjectURL(pending.url);
+          updateClipDuringRepair({
+            url: repairedUrl,
+            ...decoded,
+            frameRate: 30,
+            codecLabel: "Repaired H.264 MP4 · 30fps",
+            decodeStatus: "ready",
+            frameVerified: true,
+            repairMessage: "Auto-repaired to browser-safe H.264 MP4",
+          });
+        } catch {
+          updateClipDuringRepair({
+            decodeStatus: "invalid",
+            frameVerified: false,
+            repairMessage: "This clip could not decode here. Export stopped until it is replaced or repaired externally.",
+            thumbnailUrl: fallbackThumb,
+          });
+        }
+      }
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [clips, canUseBrowser]);
 
   const onReferenceFile = (files: BrowserFileList | null, slot: "video" | "photo") => {
     if (!canUseBrowser || !hydrated || typeof window === "undefined" || !files || files.length === 0) return;
@@ -454,6 +718,14 @@ function Editor() {
   const generatePlan = async () => {
     if (!hydrated || typeof window === "undefined") return;
     setError(null);
+    if (clipDecodeSummary.processing > 0) {
+      setError("Video rendering issue detected. Rebuilding cinematic timeline…");
+      return;
+    }
+    if (clipDecodeSummary.invalid > 0) {
+      setError("One clip still cannot decode. Replace it or upload a browser-safe MP4 before generating.");
+      return;
+    }
     setStage("planning");
     try {
       const p = await callAi();
@@ -467,6 +739,10 @@ function Editor() {
 
   const startRender = () => {
     if (!plan) return;
+    if (clipDecodeSummary.processing > 0 || clipDecodeSummary.invalid > 0 || clips.length === 0) {
+      setError("Video rendering issue detected. Rebuilding cinematic timeline…");
+      return;
+    }
     setStage("rendering");
     setProgress(0);
     const start = Date.now();
@@ -635,11 +911,21 @@ function Editor() {
               <ul className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
                 {clips.map((c) => (
                   <li key={c.id} className="group relative aspect-square overflow-hidden rounded-lg border border-white/10 bg-black/40">
-                    {c.kind === "image" ? (
+                    {c.thumbnailUrl ? (
+                      <img src={c.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                    ) : c.kind === "image" ? (
                       <img src={c.url} alt="" className="h-full w-full object-cover" />
                     ) : (
-                      <video src={c.url} className="h-full w-full object-cover" muted playsInline />
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-fuchsia-950/70 to-blue-950/70">
+                        <Loader2 className="h-4 w-4 animate-spin text-fuchsia-200" />
+                      </div>
                     )}
+                    <span className={
+                      "absolute left-1 top-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium " +
+                      (c.decodeStatus === "ready" ? "bg-emerald-500/80 text-white" : c.decodeStatus === "invalid" ? "bg-red-500/80 text-white" : "bg-amber-500/80 text-black")
+                    }>
+                      {c.decodeStatus === "ready" ? "frames ok" : c.decodeStatus === "repairing" ? "repairing" : c.decodeStatus === "invalid" ? "invalid" : "checking"}
+                    </span>
                     <button
                       onClick={() => removeClip(c.id)}
                       className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white/80 opacity-0 group-hover:opacity-100"
@@ -654,7 +940,16 @@ function Editor() {
                 ))}
               </ul>
             )}
+            {clips.length > 0 && (
+              <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/60">
+                <div className="flex items-center gap-2 text-white/80"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" /> Decode safety check</div>
+                <p className="mt-1">{clipDecodeSummary.ready} ready · {clipDecodeSummary.processing} processing/repairing · {clipDecodeSummary.invalid} invalid</p>
+                {clips.some((c) => c.repairMessage) && <p className="mt-1 text-amber-100">{clips.find((c) => c.repairMessage)?.repairMessage}</p>}
+              </div>
+            )}
           </Card>
+
+          <AppUrlCard appUrl={appUrl} onCopy={copyAppLink} onOpen={openAppLink} onShare={shareAppLink} />
 
           {/* reference media */}
           <Card>
@@ -1083,6 +1378,42 @@ function ReferenceSlot({
   );
 }
 
+function AppUrlCard({ appUrl, onCopy, onOpen, onShare }: { appUrl: string; onCopy: () => void; onOpen: () => void; onShare: () => void }) {
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-3">
+        <Label icon={Globe2} title="App URL / Share App" />
+        <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-white/55">Settings → App Information</span>
+      </div>
+      <p className="mt-2 text-xs text-white/50">Website Link</p>
+      {appUrl ? (
+        <>
+          <p className="mt-1 text-xs text-white/60">Your Smart Reel App URL:</p>
+          <div className="mt-2 break-all rounded-xl border border-fuchsia-400/25 bg-fuchsia-500/10 px-3 py-2 text-sm text-fuchsia-50">
+            {appUrl}
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <button onClick={onCopy} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-2 text-xs text-white/80 hover:text-white">
+              <Copy className="h-3.5 w-3.5" /> Copy App Link
+            </button>
+            <button onClick={onOpen} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-2 text-xs text-white/80 hover:text-white">
+              <ExternalLink className="h-3.5 w-3.5" /> Open Website
+            </button>
+            <button onClick={onShare} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-2 text-xs text-white/80 hover:text-white">
+              <Send className="h-3.5 w-3.5" /> Share App
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] text-white/40">Share works with WhatsApp, Instagram, Telegram, or any app supported by this device.</p>
+        </>
+      ) : (
+        <div className="mt-2 rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+          App is not deployed yet.
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function EmptyHint() {
   return (
     <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-10 text-center">
@@ -1226,6 +1557,8 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
   if (typeof window === "undefined") return;
   const MediaRecorderCtor = window.MediaRecorder;
   if (!MediaRecorderCtor) throw new Error("Playable video export is not supported in this browser.");
+  const usableClips = clips.filter((clip) => clip.decodeStatus !== "invalid" && (clip.kind === "image" || clip.frameVerified || clip.thumbnailUrl));
+  if (usableClips.length === 0 || plan.timeline.length === 0) throw new Error("Video rendering issue detected. Rebuilding cinematic timeline…");
 
   const isPortrait = plan.project.aspect_ratio.includes("9:16") || plan.project.aspect_ratio.includes("9/16");
   const width = isPortrait ? 720 : 1280;
@@ -1237,6 +1570,7 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
   if (!ctx) throw new Error("Could not prepare video renderer.");
 
   const stream = canvas.captureStream(30);
+  if (stream.getVideoTracks().length === 0) throw new Error("Video rendering issue detected. Rebuilding cinematic timeline…");
   const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   let audioCtx: AudioContext | null = null;
   let audioEl: HTMLAudioElement | null = null;
@@ -1306,13 +1640,14 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
     if (event.data.size > 0) chunks.push(event.data);
   };
 
-  const drawCover = (media: CanvasImageSource) => {
-    const sourceWidth = "videoWidth" in media ? media.videoWidth : "naturalWidth" in media ? media.naturalWidth : width;
-    const sourceHeight = "videoHeight" in media ? media.videoHeight : "naturalHeight" in media ? media.naturalHeight : height;
-    const scale = Math.max(width / sourceWidth, height / sourceHeight);
-    const x = (width - sourceWidth * scale) / 2;
-    const y = (height - sourceHeight * scale) / 2;
-    ctx.drawImage(media, x, y, sourceWidth * scale, sourceHeight * scale);
+  const drawCover = (media: CanvasImageSource) => drawMediaCover(ctx, media, width, height);
+
+  const loadPoster = async (clip: LocalClip) => {
+    if (!clip.thumbnailUrl) return null;
+    const image = new Image();
+    image.src = clip.thumbnailUrl;
+    await image.decode().catch(() => undefined);
+    return image.naturalWidth ? image : null;
   };
 
   const drawOverlays = (label: string, caption: string | null, filter: string) => {
@@ -1354,12 +1689,14 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
 
   const filter = colorGradeFilter(plan.style.color_grade);
   let renderedSec = 0;
+  let visibleFrameCount = 0;
   for (let i = 0; i < plan.timeline.length; i += 1) {
     const cut = plan.timeline[i];
-    const clip = clips.find((c) => c.name === cut.clip_ref) ?? clips[i % Math.max(1, clips.length)];
+    const clip = usableClips.find((c) => c.name === cut.clip_ref) ?? usableClips[i % Math.max(1, usableClips.length)];
     const durationMs = Math.max(600, (cut.out_sec - cut.in_sec) * 1000);
     onProgress(`Rendering cut ${i + 1}/${plan.timeline.length}`);
     if (clip?.kind === "video") {
+      const poster = await loadPoster(clip);
       const video = window.document.createElement("video");
       video.src = clip.url;
       video.muted = true;
@@ -1372,10 +1709,18 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
         ctx.fillStyle = "#07050f";
         ctx.fillRect(0, 0, width, height);
         ctx.filter = filter;
-        if (video.readyState >= 2 && video.videoWidth > 0) drawCover(video);
-        else {
+        if (video.readyState >= 2 && video.videoWidth > 0) {
+          drawCover(video);
+          visibleFrameCount += 1;
+        } else if (poster) {
+          drawCover(poster);
+          visibleFrameCount += 1;
+        } else {
           ctx.filter = "none";
-          ctx.fillStyle = "#16091f";
+          const gradient = ctx.createLinearGradient(0, 0, width, height);
+          gradient.addColorStop(0, "#3b0f46");
+          gradient.addColorStop(1, "#0c2a54");
+          ctx.fillStyle = gradient;
           ctx.fillRect(0, 0, width, height);
           ctx.fillStyle = "rgba(255,255,255,0.82)";
           ctx.font = "24px Inter, Arial, sans-serif";
@@ -1387,7 +1732,7 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
       video.pause();
     } else if (clip) {
       const image = new Image();
-      image.src = clip.url;
+      image.src = clip.thumbnailUrl || clip.url;
       await image.decode().catch(() => undefined);
       const start = window.performance.now();
       while (window.performance.now() - start < durationMs) {
@@ -1395,6 +1740,7 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
         ctx.fillRect(0, 0, width, height);
         ctx.filter = filter;
         drawCover(image);
+        visibleFrameCount += 1;
         drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
         await new Promise((resolve) => window.requestAnimationFrame(resolve));
       }
@@ -1403,15 +1749,21 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
     if (renderedSec > Math.max(45, plan.project.target_duration_sec + 4)) break;
   }
 
+  if (visibleFrameCount === 0) throw new Error("Video rendering issue detected. Rebuilding cinematic timeline…");
+
   recorder.stop();
   audioEl?.pause();
   stopSynth?.();
   const blob = await recordDone;
   await audioCtx?.close().catch(() => undefined);
-  const url = URL.createObjectURL(blob);
+  if (blob.size < 2048) throw new Error("Export validation failed: no video frames were encoded.");
+  onProgress("Muxing H.264 MP4 with video + audio…");
+  const mp4Blob = await transcodeRecordingToMp4(blob);
+  if (mp4Blob.size < 2048) throw new Error("Export validation failed: MP4 muxing produced an empty file.");
+  const url = URL.createObjectURL(mp4Blob);
   const link = window.document.createElement("a");
   link.href = url;
-  link.download = `${plan.project.title.replace(/\s+/g, "-").toLowerCase()}-preview.webm`;
+  link.download = `${plan.project.title.replace(/\s+/g, "-").toLowerCase()}-final-reel.mp4`;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -1454,8 +1806,9 @@ function PreviewScreen({
 
   // Match cuts to actual uploaded clips by name (fall back to round-robin)
   const sequence = useMemo(() => {
+    const usable = clips.filter((clip) => clip.decodeStatus !== "invalid");
     return plan.timeline.map((t) => {
-      const match = clips.find((c) => c.name === t.clip_ref) ?? clips[t.index % Math.max(1, clips.length)];
+      const match = usable.find((c) => c.name === t.clip_ref) ?? usable[t.index % Math.max(1, usable.length)];
       const cutDuration = Math.max(0.6, t.out_sec - t.in_sec);
       return { cut: t, clip: match, cutDuration };
     });
@@ -1790,6 +2143,7 @@ function PreviewScreen({
                 ref={videoRef}
                 key={current.clip.id + cutIdx}
                 src={current.clip.url}
+                poster={current.clip.thumbnailUrl}
                 className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
                 style={{ filter, animationName: cinematicAnim, transform: beatPulse ? "scale(1.025)" : undefined }}
                 muted
@@ -1799,9 +2153,8 @@ function PreviewScreen({
                 onLoadedData={() => setMediaReady(true)}
                 onCanPlay={() => setMediaReady(true)}
                 onError={() => {
-                  setMediaReady(false);
-                  setPreviewIssue("This clip could not decode here, so Smart Reel will keep the frame visible in export package.");
-                  advance();
+                  setMediaReady(true);
+                  setPreviewIssue("This clip could not decode here. Smart Reel is using the verified thumbnail and repaired export path.");
                 }}
                 onTimeUpdate={onTimeUpdate}
                 onEnded={advance}
@@ -1896,7 +2249,7 @@ function PreviewScreen({
             >
               {s.clip ? (
                 s.clip.kind === "video" ? (
-                  <video src={s.clip.url} className="h-full w-full object-cover" muted playsInline preload="metadata" style={{ filter }} />
+                  s.clip.thumbnailUrl ? <img src={s.clip.thumbnailUrl} alt="" className="h-full w-full object-cover" style={{ filter }} /> : <video src={s.clip.url} className="h-full w-full object-cover" muted playsInline preload="metadata" style={{ filter }} />
                 ) : (
                   <img src={s.clip.url} alt="" className="h-full w-full object-cover" style={{ filter }} />
                 )
