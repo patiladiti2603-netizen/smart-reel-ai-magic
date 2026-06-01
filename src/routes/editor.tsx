@@ -322,7 +322,8 @@ const repairVideoWithFfmpeg = async (clip: LocalClip) => {
   ]);
   const data = await ffmpeg.readFile(outputName);
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(String(data));
-  const blob = new Blob([bytes], { type: "video/mp4" });
+  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const blob = new Blob([arrayBuffer], { type: "video/mp4" });
   await ffmpeg.deleteFile(inputName).catch(() => undefined);
   await ffmpeg.deleteFile(outputName).catch(() => undefined);
   ffmpeg.terminate();
@@ -508,7 +509,15 @@ function Editor() {
   const makeLocalClip = (f: File): LocalClip => {
     const url = URL.createObjectURL(f);
     const kind: "video" | "image" = f.type.startsWith("video") ? "video" : "image";
-    return { id: `${f.name}-${f.size}-${Math.random().toString(36).slice(2, 7)}`, file: f, url, kind, name: f.name };
+    return {
+      id: `${f.name}-${f.size}-${Math.random().toString(36).slice(2, 7)}`,
+      file: f,
+      url,
+      kind,
+      name: f.name,
+      decodeStatus: kind === "video" ? "processing" : "ready",
+      codecLabel: kind === "video" ? getVideoSupportLabel(f) : f.type || "image",
+    };
   };
 
   const onClipFiles = (files: BrowserFileList | null) => {
