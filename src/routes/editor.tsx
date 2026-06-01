@@ -1685,12 +1685,14 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
 
   const filter = colorGradeFilter(plan.style.color_grade);
   let renderedSec = 0;
+  let visibleFrameCount = 0;
   for (let i = 0; i < plan.timeline.length; i += 1) {
     const cut = plan.timeline[i];
-    const clip = clips.find((c) => c.name === cut.clip_ref) ?? clips[i % Math.max(1, clips.length)];
+    const clip = usableClips.find((c) => c.name === cut.clip_ref) ?? usableClips[i % Math.max(1, usableClips.length)];
     const durationMs = Math.max(600, (cut.out_sec - cut.in_sec) * 1000);
     onProgress(`Rendering cut ${i + 1}/${plan.timeline.length}`);
     if (clip?.kind === "video") {
+      const poster = await loadPoster(clip);
       const video = window.document.createElement("video");
       video.src = clip.url;
       video.muted = true;
@@ -1703,10 +1705,18 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
         ctx.fillStyle = "#07050f";
         ctx.fillRect(0, 0, width, height);
         ctx.filter = filter;
-        if (video.readyState >= 2 && video.videoWidth > 0) drawCover(video);
-        else {
+        if (video.readyState >= 2 && video.videoWidth > 0) {
+          drawCover(video);
+          visibleFrameCount += 1;
+        } else if (poster) {
+          drawCover(poster);
+          visibleFrameCount += 1;
+        } else {
           ctx.filter = "none";
-          ctx.fillStyle = "#16091f";
+          const gradient = ctx.createLinearGradient(0, 0, width, height);
+          gradient.addColorStop(0, "#3b0f46");
+          gradient.addColorStop(1, "#0c2a54");
+          ctx.fillStyle = gradient;
           ctx.fillRect(0, 0, width, height);
           ctx.fillStyle = "rgba(255,255,255,0.82)";
           ctx.font = "24px Inter, Arial, sans-serif";
@@ -1718,7 +1728,7 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
       video.pause();
     } else if (clip) {
       const image = new Image();
-      image.src = clip.url;
+      image.src = clip.thumbnailUrl || clip.url;
       await image.decode().catch(() => undefined);
       const start = window.performance.now();
       while (window.performance.now() - start < durationMs) {
@@ -1726,6 +1736,7 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
         ctx.fillRect(0, 0, width, height);
         ctx.filter = filter;
         drawCover(image);
+        visibleFrameCount += 1;
         drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
         await new Promise((resolve) => window.requestAnimationFrame(resolve));
       }
@@ -1734,15 +1745,21 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
     if (renderedSec > Math.max(45, plan.project.target_duration_sec + 4)) break;
   }
 
+  if (visibleFrameCount === 0) throw new Error("Video rendering issue detected. Rebuilding cinematic timeline…");
+
   recorder.stop();
   audioEl?.pause();
   stopSynth?.();
   const blob = await recordDone;
   await audioCtx?.close().catch(() => undefined);
-  const url = URL.createObjectURL(blob);
+  if (blob.size < 2048) throw new Error("Export validation failed: no video frames were encoded.");
+  onProgress("Muxing H.264 MP4 with video + audio…");
+  const mp4Blob = await transcodeRecordingToMp4(blob);
+  if (mp4Blob.size < 2048) throw new Error("Export validation failed: MP4 muxing produced an empty file.");
+  const url = URL.createObjectURL(mp4Blob);
   const link = window.document.createElement("a");
   link.href = url;
-  link.download = `${plan.project.title.replace(/\s+/g, "-").toLowerCase()}-preview.webm`;
+  link.download = `${plan.project.title.replace(/\s+/g, "-").toLowerCase()}-final-reel.mp4`;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
