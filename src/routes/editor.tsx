@@ -30,8 +30,8 @@ import {
   Send,
 } from "lucide-react";
 import logo from "@/assets/smart-reel-logo.png";
-import ffmpegCoreUrl from "@ffmpeg/core/dist/umd/ffmpeg-core.js?url";
-import ffmpegWasmUrl from "@ffmpeg/core/dist/umd/ffmpeg-core.wasm?url";
+import ffmpegCoreUrl from "@ffmpeg/core?url";
+import ffmpegWasmUrl from "@ffmpeg/core/wasm?url";
 
 export const Route = createFileRoute("/editor")({
   component: Editor,
