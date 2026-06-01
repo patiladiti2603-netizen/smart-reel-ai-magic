@@ -23,6 +23,11 @@ import {
   CheckCircle2,
   RefreshCw,
   Maximize2,
+  Copy,
+  ExternalLink,
+  Info,
+  Globe2,
+  Send,
 } from "lucide-react";
 import logo from "@/assets/smart-reel-logo.png";
 
@@ -37,7 +42,23 @@ export const Route = createFileRoute("/editor")({
 });
 
 type ClipMeta = { name: string; description: string; duration_sec?: number };
-type LocalClip = { id: string; file: File; url: string; kind: "video" | "image"; name: string; duration?: number };
+type DecodeStatus = "processing" | "ready" | "repairing" | "invalid";
+type LocalClip = {
+  id: string;
+  file: File;
+  url: string;
+  kind: "video" | "image";
+  name: string;
+  duration?: number;
+  width?: number;
+  height?: number;
+  frameRate?: number;
+  codecLabel?: string;
+  thumbnailUrl?: string;
+  decodeStatus: DecodeStatus;
+  repairMessage?: string;
+  frameVerified?: boolean;
+};
 type ReferenceMedia = { id: string; file: File; url: string; kind: "video" | "image"; name: string } | null;
 type SongFile = { id: string; file: File; url: string; name: string } | null;
 type BrowserFileList = { length: number; item(index: number): File | null; [index: number]: File };
@@ -179,6 +200,8 @@ const RECOMMENDATIONS: Record<string, Partial<Record<string, string[]>>> = {
 };
 
 const PROJECTS_KEY = "smartreel.projects.v1";
+const APP_PUBLIC_URL = "https://smart-reel-ai-magic.lovable.app";
+const VIDEO_REPAIR_MESSAGE = "Clip decoding failed. Auto-repairing...";
 
 const colorGradeFilter = (grade: string): string => {
   const g = grade.toLowerCase();
