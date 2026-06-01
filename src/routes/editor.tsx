@@ -468,6 +468,36 @@ function Editor() {
   }, [selected, instructions, refVideo, refPhoto, song, selectedSongTitle, qualityMode, category, instagramSubstyle, captionsEnabled, captionText, captionStyle]);
 
   const totalSelected = Object.values(selected).reduce((n, arr) => n + arr.length, 0);
+  const clipDecodeSummary = useMemo(() => {
+    const processing = clips.filter((c) => c.decodeStatus === "processing" || c.decodeStatus === "repairing").length;
+    const invalid = clips.filter((c) => c.decodeStatus === "invalid").length;
+    const ready = clips.filter((c) => c.decodeStatus === "ready").length;
+    return { processing, invalid, ready };
+  }, [clips]);
+  const isLocalApp = canUseBrowser && typeof window !== "undefined" && /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+  const appUrl = isLocalApp ? "" : APP_PUBLIC_URL;
+
+  const copyAppLink = async () => {
+    if (!appUrl || typeof window === "undefined") return;
+    await window.navigator.clipboard?.writeText(appUrl).catch(() => undefined);
+    setSavedToast("App link copied");
+    window.setTimeout(() => setSavedToast(null), 2500);
+  };
+
+  const openAppLink = () => {
+    if (!appUrl || typeof window === "undefined") return;
+    window.open(appUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const shareAppLink = async () => {
+    if (!appUrl || typeof window === "undefined") return;
+    const text = `Smart Reel AI App: ${appUrl}`;
+    if (window.navigator.share) {
+      await window.navigator.share({ title: "Smart Reel", text, url: appUrl }).catch(() => undefined);
+    } else {
+      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
+    }
+  };
 
   const recommendedSongs = useMemo(
     () => getRecommendedSongs(
@@ -652,6 +682,14 @@ function Editor() {
   const generatePlan = async () => {
     if (!hydrated || typeof window === "undefined") return;
     setError(null);
+    if (clipDecodeSummary.processing > 0) {
+      setError("Video rendering issue detected. Rebuilding cinematic timeline…");
+      return;
+    }
+    if (clipDecodeSummary.invalid > 0) {
+      setError("One clip still cannot decode. Replace it or upload a browser-safe MP4 before generating.");
+      return;
+    }
     setStage("planning");
     try {
       const p = await callAi();
@@ -665,6 +703,10 @@ function Editor() {
 
   const startRender = () => {
     if (!plan) return;
+    if (clipDecodeSummary.processing > 0 || clipDecodeSummary.invalid > 0 || clips.length === 0) {
+      setError("Video rendering issue detected. Rebuilding cinematic timeline…");
+      return;
+    }
     setStage("rendering");
     setProgress(0);
     const start = Date.now();
