@@ -230,6 +230,105 @@ const waitForEvent = (target: EventTarget, events: string[], timeout = 1600) =>
     events.forEach((event) => target.addEventListener(event, finish, { once: true }));
   });
 
+const getVideoSupportLabel = (file: File) => {
+  const name = file.name.toLowerCase();
+  const type = file.type || "unknown";
+  if (type.includes("mp4") || name.endsWith(".mp4") || name.endsWith(".m4v")) return "MP4 / H.264 preferred";
+  if (type.includes("quicktime") || name.endsWith(".mov")) return "MOV / HEVC — repair if needed";
+  if (type.includes("webm") || name.endsWith(".webm")) return "WebM — browser decode check";
+  if (name.endsWith(".hevc") || name.endsWith(".h265")) return "H.265/HEVC — repair if needed";
+  return type;
+};
+
+const drawMediaCover = (ctx: CanvasRenderingContext2D, media: CanvasImageSource, width: number, height: number) => {
+  const sourceWidth = "videoWidth" in media ? media.videoWidth : "naturalWidth" in media ? media.naturalWidth : width;
+  const sourceHeight = "videoHeight" in media ? media.videoHeight : "naturalHeight" in media ? media.naturalHeight : height;
+  const safeWidth = sourceWidth || width;
+  const safeHeight = sourceHeight || height;
+  const scale = Math.max(width / safeWidth, height / safeHeight);
+  const x = (width - safeWidth * scale) / 2;
+  const y = (height - safeHeight * scale) / 2;
+  ctx.drawImage(media, x, y, safeWidth * scale, safeHeight * scale);
+};
+
+const makeFallbackThumbnail = async (label: string, width = 540, height = 960) => {
+  const canvas = window.document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  const gradient = ctx.createLinearGradient(0, 0, width, height);
+  gradient.addColorStop(0, "#3b0f46");
+  gradient.addColorStop(0.48, "#120817");
+  gradient.addColorStop(1, "#0c2a54");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = "rgba(255,255,255,0.12)";
+  for (let i = 0; i < 7; i += 1) ctx.fillRect(i * 94 - 30, 0, 42, height);
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  ctx.font = "700 34px Inter, Arial, sans-serif";
+  ctx.fillText("Smart Reel", 42, height / 2 - 14);
+  ctx.font = "22px Inter, Arial, sans-serif";
+  ctx.fillText(label.slice(0, 30), 42, height / 2 + 28);
+  return canvas.toDataURL("image/jpeg", 0.84);
+};
+
+const extractVideoThumbnail = async (url: string, targetSec = 0.08) => {
+  const video = window.document.createElement("video");
+  video.src = url;
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  await prepareVideoFrame(video, targetSec);
+  if (!video.videoWidth || !video.videoHeight) throw new Error("No decoded video frame");
+  const canvas = window.document.createElement("canvas");
+  canvas.width = Math.min(720, video.videoWidth);
+  canvas.height = Math.round((canvas.width / video.videoWidth) * video.videoHeight);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Thumbnail canvas unavailable");
+  drawMediaCover(ctx, video, canvas.width, canvas.height);
+  return {
+    thumbnailUrl: canvas.toDataURL("image/jpeg", 0.86),
+    duration: Number.isFinite(video.duration) ? video.duration : undefined,
+    width: video.videoWidth,
+    height: video.videoHeight,
+  };
+};
+
+const repairVideoWithFfmpeg = async (clip: LocalClip) => {
+  const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
+    import("@ffmpeg/ffmpeg"),
+    import("@ffmpeg/util"),
+  ]);
+  const ffmpeg = new FFmpeg();
+  const baseURL = "/node_modules/@ffmpeg/core/dist/umd";
+  await ffmpeg.load({
+    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
+    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
+  });
+  const inputName = `input-${clip.id}.${clip.name.split(".").pop() || "mp4"}`;
+  const outputName = `smart-reel-repaired-${clip.id}.mp4`;
+  await ffmpeg.writeFile(inputName, await fetchFile(clip.file));
+  await ffmpeg.exec([
+    "-i", inputName,
+    "-map", "0:v:0",
+    "-an",
+    "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=30",
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-pix_fmt", "yuv420p",
+    "-movflags", "+faststart",
+    outputName,
+  ]);
+  const data = await ffmpeg.readFile(outputName);
+  const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(String(data));
+  const blob = new Blob([bytes], { type: "video/mp4" });
+  await ffmpeg.deleteFile(inputName).catch(() => undefined);
+  await ffmpeg.deleteFile(outputName).catch(() => undefined);
+  ffmpeg.terminate();
+  return URL.createObjectURL(blob);
+};
+
 const prepareVideoFrame = async (video: HTMLVideoElement, targetSec: number) => {
   video.preload = "auto";
   video.muted = true;
