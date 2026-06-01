@@ -344,6 +344,38 @@ const repairVideoWithFfmpeg = async (clip: LocalClip) => {
   return URL.createObjectURL(blob);
 };
 
+const transcodeRecordingToMp4 = async (blob: Blob) => {
+  const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
+    import("@ffmpeg/ffmpeg"),
+    import("@ffmpeg/util"),
+  ]);
+  const ffmpeg = new FFmpeg();
+  await ffmpeg.load({
+    coreURL: await toBlobURL(ffmpegCoreUrl, "text/javascript"),
+    wasmURL: await toBlobURL(ffmpegWasmUrl, "application/wasm"),
+  });
+  await ffmpeg.writeFile("render.webm", await fetchFile(blob));
+  await ffmpeg.exec([
+    "-i", "render.webm",
+    "-map", "0:v:0",
+    "-map", "0:a?",
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-pix_fmt", "yuv420p",
+    "-c:a", "aac",
+    "-b:a", "160k",
+    "-movflags", "+faststart",
+    "smart-reel-final.mp4",
+  ]);
+  const data = await ffmpeg.readFile("smart-reel-final.mp4");
+  const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(String(data));
+  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  await ffmpeg.deleteFile("render.webm").catch(() => undefined);
+  await ffmpeg.deleteFile("smart-reel-final.mp4").catch(() => undefined);
+  ffmpeg.terminate();
+  return new Blob([arrayBuffer], { type: "video/mp4" });
+};
+
 const prepareVideoFrame = async (video: HTMLVideoElement, targetSec: number) => {
   video.preload = "auto";
   video.muted = true;
