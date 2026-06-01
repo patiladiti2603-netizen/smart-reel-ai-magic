@@ -295,6 +295,19 @@ const extractVideoThumbnail = async (url: string, targetSec = 0.08) => {
   };
 };
 
+const extractImageThumbnail = async (url: string) => {
+  const image = new Image();
+  image.src = url;
+  await image.decode();
+  const canvas = window.document.createElement("canvas");
+  canvas.width = 540;
+  canvas.height = 960;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Thumbnail canvas unavailable");
+  drawMediaCover(ctx, image, canvas.width, canvas.height);
+  return { thumbnailUrl: canvas.toDataURL("image/jpeg", 0.86), width: image.naturalWidth, height: image.naturalHeight };
+};
+
 const repairVideoWithFfmpeg = async (clip: LocalClip) => {
   const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
     import("@ffmpeg/ffmpeg"),
@@ -525,6 +538,59 @@ function Editor() {
     const next: LocalClip[] = Array.from(files).map(makeLocalClip);
     setClips((prev) => [...prev, ...next]);
   };
+
+  useEffect(() => {
+    if (!canUseBrowser || typeof window === "undefined") return;
+    const pending = clips.find((clip) => clip.decodeStatus === "processing" && !clip.frameVerified);
+    if (!pending) return;
+    let cancelled = false;
+    const updateClip = (patch: Partial<LocalClip>) => {
+      if (cancelled) return;
+      setClips((prev) => prev.map((clip) => (clip.id === pending.id ? { ...clip, ...patch } : clip)));
+    };
+    const run = async () => {
+      if (pending.kind === "image") {
+        try {
+          const thumb = await extractImageThumbnail(pending.url);
+          updateClip({ ...thumb, decodeStatus: "ready", frameVerified: true });
+        } catch {
+          updateClip({ thumbnailUrl: await makeFallbackThumbnail(pending.name), decodeStatus: "ready", frameVerified: true });
+        }
+        return;
+      }
+      try {
+        const decoded = await extractVideoThumbnail(pending.url);
+        updateClip({ ...decoded, frameRate: 30, decodeStatus: "ready", frameVerified: true, repairMessage: "Video stream verified" });
+      } catch {
+        updateClip({ decodeStatus: "repairing", repairMessage: VIDEO_REPAIR_MESSAGE, thumbnailUrl: await makeFallbackThumbnail(pending.name) });
+        try {
+          const repairedUrl = await repairVideoWithFfmpeg(pending);
+          const decoded = await extractVideoThumbnail(repairedUrl);
+          if (pending.url.startsWith("blob:")) URL.revokeObjectURL(pending.url);
+          updateClip({
+            url: repairedUrl,
+            ...decoded,
+            frameRate: 30,
+            codecLabel: "Repaired H.264 MP4 · 30fps",
+            decodeStatus: "ready",
+            frameVerified: true,
+            repairMessage: "Auto-repaired to browser-safe H.264 MP4",
+          });
+        } catch {
+          updateClip({
+            decodeStatus: "invalid",
+            frameVerified: false,
+            repairMessage: "This clip could not decode here. Export stopped until it is replaced or repaired externally.",
+            thumbnailUrl: await makeFallbackThumbnail(pending.name),
+          });
+        }
+      }
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [clips, canUseBrowser]);
 
   const onReferenceFile = (files: BrowserFileList | null, slot: "video" | "photo") => {
     if (!canUseBrowser || !hydrated || typeof window === "undefined" || !files || files.length === 0) return;
