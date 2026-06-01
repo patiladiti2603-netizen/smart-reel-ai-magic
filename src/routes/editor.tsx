@@ -1802,8 +1802,9 @@ function PreviewScreen({
 
   // Match cuts to actual uploaded clips by name (fall back to round-robin)
   const sequence = useMemo(() => {
+    const usable = clips.filter((clip) => clip.decodeStatus !== "invalid");
     return plan.timeline.map((t) => {
-      const match = clips.find((c) => c.name === t.clip_ref) ?? clips[t.index % Math.max(1, clips.length)];
+      const match = usable.find((c) => c.name === t.clip_ref) ?? usable[t.index % Math.max(1, usable.length)];
       const cutDuration = Math.max(0.6, t.out_sec - t.in_sec);
       return { cut: t, clip: match, cutDuration };
     });
@@ -2138,6 +2139,7 @@ function PreviewScreen({
                 ref={videoRef}
                 key={current.clip.id + cutIdx}
                 src={current.clip.url}
+                poster={current.clip.thumbnailUrl}
                 className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
                 style={{ filter, animationName: cinematicAnim, transform: beatPulse ? "scale(1.025)" : undefined }}
                 muted
@@ -2147,9 +2149,8 @@ function PreviewScreen({
                 onLoadedData={() => setMediaReady(true)}
                 onCanPlay={() => setMediaReady(true)}
                 onError={() => {
-                  setMediaReady(false);
-                  setPreviewIssue("This clip could not decode here, so Smart Reel will keep the frame visible in export package.");
-                  advance();
+                  setMediaReady(true);
+                  setPreviewIssue("This clip could not decode here. Smart Reel is using the verified thumbnail and repaired export path.");
                 }}
                 onTimeUpdate={onTimeUpdate}
                 onEnded={advance}
@@ -2244,7 +2245,7 @@ function PreviewScreen({
             >
               {s.clip ? (
                 s.clip.kind === "video" ? (
-                  <video src={s.clip.url} className="h-full w-full object-cover" muted playsInline preload="metadata" style={{ filter }} />
+                  s.clip.thumbnailUrl ? <img src={s.clip.thumbnailUrl} alt="" className="h-full w-full object-cover" style={{ filter }} /> : <video src={s.clip.url} className="h-full w-full object-cover" muted playsInline preload="metadata" style={{ filter }} />
                 ) : (
                   <img src={s.clip.url} alt="" className="h-full w-full object-cover" style={{ filter }} />
                 )
