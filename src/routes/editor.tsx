@@ -559,7 +559,7 @@ function Editor() {
       url,
       kind,
       name: f.name,
-      decodeStatus: kind === "video" ? "processing" : "ready",
+      decodeStatus: "processing",
       codecLabel: kind === "video" ? getVideoSupportLabel(f) : f.type || "image",
     };
   };
@@ -875,11 +875,21 @@ function Editor() {
               <ul className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
                 {clips.map((c) => (
                   <li key={c.id} className="group relative aspect-square overflow-hidden rounded-lg border border-white/10 bg-black/40">
-                    {c.kind === "image" ? (
+                    {c.thumbnailUrl ? (
+                      <img src={c.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                    ) : c.kind === "image" ? (
                       <img src={c.url} alt="" className="h-full w-full object-cover" />
                     ) : (
-                      <video src={c.url} className="h-full w-full object-cover" muted playsInline />
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-fuchsia-950/70 to-blue-950/70">
+                        <Loader2 className="h-4 w-4 animate-spin text-fuchsia-200" />
+                      </div>
                     )}
+                    <span className={
+                      "absolute left-1 top-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium " +
+                      (c.decodeStatus === "ready" ? "bg-emerald-500/80 text-white" : c.decodeStatus === "invalid" ? "bg-red-500/80 text-white" : "bg-amber-500/80 text-black")
+                    }>
+                      {c.decodeStatus === "ready" ? "frames ok" : c.decodeStatus === "repairing" ? "repairing" : c.decodeStatus === "invalid" ? "invalid" : "checking"}
+                    </span>
                     <button
                       onClick={() => removeClip(c.id)}
                       className="absolute right-1 top-1 rounded-full bg-black/70 p-1 text-white/80 opacity-0 group-hover:opacity-100"
@@ -894,7 +904,16 @@ function Editor() {
                 ))}
               </ul>
             )}
+            {clips.length > 0 && (
+              <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/60">
+                <div className="flex items-center gap-2 text-white/80"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" /> Decode safety check</div>
+                <p className="mt-1">{clipDecodeSummary.ready} ready · {clipDecodeSummary.processing} processing/repairing · {clipDecodeSummary.invalid} invalid</p>
+                {clips.some((c) => c.repairMessage) && <p className="mt-1 text-amber-100">{clips.find((c) => c.repairMessage)?.repairMessage}</p>}
+              </div>
+            )}
           </Card>
+
+          <AppUrlCard appUrl={appUrl} onCopy={copyAppLink} onOpen={openAppLink} onShare={shareAppLink} />
 
           {/* reference media */}
           <Card>
