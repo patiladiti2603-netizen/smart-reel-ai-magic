@@ -2021,6 +2021,14 @@ function PreviewScreen({
 
   const seekTo = useCallback((targetSec: number) => {
     const bounded = Math.max(0, Math.min(targetSec, previewDuration));
+    const renderedVideo = renderedVideoRef.current;
+    if (renderedVideo) {
+      try {
+        renderedVideo.currentTime = bounded;
+        setElapsed(bounded);
+      } catch {}
+      return;
+    }
     if (sequence.length === 0) return;
     const idx = Math.max(0, cutStarts.findIndex((start, i) => bounded >= start && bounded < start + (sequence[i]?.cutDuration ?? 0)));
     const nextIdx = idx === -1 ? Math.max(0, sequence.length - 1) : idx;
@@ -2286,80 +2294,52 @@ function PreviewScreen({
 
         <div
           ref={containerRef}
-          onClick={() => {
-            if (song) enableAudioGraph().finally(() => audioRef.current?.play().then(() => {
-              setAudioEnabled(true);
-              setNeedsAudioTap(false);
-            }).catch(() => {
-              setAudioEnabled(false);
-              setNeedsAudioTap(true);
-            }));
-          }}
           className={"relative mx-auto overflow-hidden rounded-xl bg-gradient-to-br from-[#16091f] via-black to-[#071022] sr-grain sr-vignette " + (isPortrait ? "aspect-[9/16] max-w-[280px]" : "aspect-video w-full")}
         >
-          {current?.clip ? (
-            current.clip.kind === "video" ? (
-              <video
-                ref={videoRef}
-                key={current.clip.id + cutIdx}
-                src={current.clip.url}
-                poster={current.clip.thumbnailUrl}
-                className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
-                style={{ filter, animationName: cinematicAnim, transform: beatPulse ? "scale(1.025)" : undefined }}
-                muted
-                playsInline
-                preload="auto"
-                controls={false}
-                onLoadedData={() => setMediaReady(true)}
-                onCanPlay={() => setMediaReady(true)}
-                onError={() => {
-                  setMediaReady(true);
-                  setPreviewIssue("This clip could not decode here. Smart Reel is using the verified thumbnail and repaired export path.");
-                }}
-                onTimeUpdate={onTimeUpdate}
-                onEnded={advance}
-              />
-            ) : (
-              <img
-                key={current.clip.id + cutIdx}
-                src={current.clip.url}
-                alt=""
-                className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
-                style={{ filter, animationName: cinematicAnim, transform: beatPulse ? "scale(1.025)" : undefined }}
-                onLoad={() => setMediaReady(true)}
-              />
-            )
+          {renderedReel?.url ? (
+            <video
+              ref={renderedVideoRef}
+              key={renderedReel.url}
+              src={renderedReel.url}
+              className="h-full w-full object-cover"
+              controls
+              autoPlay
+              playsInline
+              preload="auto"
+              onLoadedMetadata={(event) => {
+                const video = event.currentTarget;
+                setMediaReady(true);
+                setElapsed(video.currentTime || 0);
+              }}
+              onTimeUpdate={(event) => setElapsed(event.currentTarget.currentTime || 0)}
+              onPlay={() => setPlaying(true)}
+              onPause={() => setPlaying(false)}
+              onError={() => {
+                setPreviewIssue("Preview failed. Rebuilding video automatically.");
+                void rebuildPreview("Preview failed. Rebuilding video automatically.");
+              }}
+            />
+          ) : current?.clip ? (
+            <img
+              src={current.clip.thumbnailUrl || current.clip.url}
+              alt=""
+              className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
+              style={{ filter, animationName: cinematicAnim, transform: beatPulse ? "scale(1.025)" : undefined }}
+              onLoad={() => setMediaReady(true)}
+            />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-white/50">No clips loaded</div>
           )}
 
-          {current?.clip && !mediaReady && (
+          {(!renderedReel || exportBusy) && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-fuchsia-950/70 via-black/80 to-blue-950/70 px-6 text-center">
-              <Film className="h-8 w-8 text-fuchsia-200" />
-              <p className="mt-3 text-sm font-medium text-white/85">Preparing HD preview frame</p>
-              <p className="mt-1 max-w-[220px] truncate text-xs text-white/45">{current.clip.name}</p>
+              <Loader2 className="h-8 w-8 animate-spin text-fuchsia-200" />
+              <p className="mt-3 text-sm font-medium text-white/85">{exportStatus || "Building validated preview video…"}</p>
+              <p className="mt-1 max-w-[240px] text-xs text-white/45">Photos/clips, transitions and music are being muxed into one playable file.</p>
             </div>
           )}
 
-          {song && (
-            <audio ref={audioRef} src={song.url} loop preload="auto" crossOrigin="anonymous" />
-          )}
-
-          {song && needsAudioTap && (
-            <div className="pointer-events-none absolute inset-x-4 top-1/2 z-10 -translate-y-1/2 rounded-xl border border-fuchsia-300/25 bg-black/65 px-4 py-3 text-center text-xs text-white/85 backdrop-blur">
-              Tap preview to enable audible song mix
-            </div>
-          )}
-
-          {activeText && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-8 px-4 text-center">
-              <span className="inline-block rounded-md bg-black/55 px-3 py-1.5 text-sm font-semibold tracking-wide text-white drop-shadow">
-                {activeText}
-              </span>
-            </div>
-          )}
-
-          {current?.cut.transition_in && (
+          {current?.cut.transition_in && !renderedReel && (
             <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-fuchsia-500/30 px-2 py-0.5 text-[10px] text-fuchsia-100 backdrop-blur">
               ↪ {current.cut.transition_in}
             </span>
@@ -2374,7 +2354,7 @@ function PreviewScreen({
           </button>
 
           <div className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-1 text-[10px] text-white/70 backdrop-blur">
-            {song ? (audioEnabled ? "Audio on" : "Tap for audio") : plan.music.selected_song || "AI song"}
+            {previewValidation.canExport ? "Video + audio ok" : "Validating media"}
           </div>
         </div>
 
