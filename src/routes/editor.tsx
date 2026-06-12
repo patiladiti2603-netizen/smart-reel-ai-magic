@@ -356,7 +356,7 @@ const repairVideoWithFfmpeg = async (clip: LocalClip) => {
   return URL.createObjectURL(blob);
 };
 
-const transcodeRecordingToMp4 = async (blob: Blob) => {
+const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: number, bpm: number) => {
   const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
     import("@ffmpeg/ffmpeg"),
     import("@ffmpeg/util"),
@@ -367,18 +367,44 @@ const transcodeRecordingToMp4 = async (blob: Blob) => {
     wasmURL: await toBlobURL(ffmpegWasmUrl, "application/wasm"),
   });
   await ffmpeg.writeFile("render.webm", await fetchFile(blob));
-  await ffmpeg.exec([
-    "-i", "render.webm",
-    "-map", "0:v:0",
-    "-map", "0:a?",
-    "-c:v", "libx264",
-    "-preset", "veryfast",
-    "-pix_fmt", "yuv420p",
-    "-c:a", "aac",
-    "-b:a", "160k",
-    "-movflags", "+faststart",
-    "smart-reel-final.mp4",
-  ]);
+  if (song) {
+    const ext = song.name.split(".").pop()?.replace(/[^a-z0-9]/gi, "").toLowerCase() || "mp3";
+    const songName = `song.${ext}`;
+    await ffmpeg.writeFile(songName, await fetchFile(song.file));
+    await ffmpeg.exec([
+      "-i", "render.webm",
+      "-stream_loop", "-1",
+      "-i", songName,
+      "-map", "0:v:0",
+      "-map", "1:a:0",
+      "-shortest",
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-movflags", "+faststart",
+      "smart-reel-final.mp4",
+    ]);
+    await ffmpeg.deleteFile(songName).catch(() => undefined);
+  } else {
+    const beatFrequency = Math.round(Math.max(80, Math.min(180, bpm || 110)));
+    await ffmpeg.exec([
+      "-i", "render.webm",
+      "-f", "lavfi",
+      "-i", `sine=frequency=${beatFrequency}:duration=${Math.max(1, durationSec).toFixed(2)}`,
+      "-map", "0:v:0",
+      "-map", "1:a:0",
+      "-shortest",
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "160k",
+      "-movflags", "+faststart",
+      "smart-reel-final.mp4",
+    ]);
+  }
   const data = await ffmpeg.readFile("smart-reel-final.mp4");
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(String(data));
   const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
