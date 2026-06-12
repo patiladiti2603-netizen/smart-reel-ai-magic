@@ -1908,6 +1908,9 @@ function PreviewScreen({
   const [previewIssue, setPreviewIssue] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState(false);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [renderedReel, setRenderedReel] = useState<RenderedReel | null>(null);
+  const [previewValidation, setPreviewValidation] = useState<PreviewValidation>(() => emptyPreviewValidation("Rendering preview video…"));
+  const [renderAttempt, setRenderAttempt] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const imageTimerRef = useRef<number | null>(null);
@@ -1915,6 +1918,32 @@ function PreviewScreen({
   const audioCtxRef = useRef<AudioContext | null>(null);
   const synthCleanupRef = useRef<(() => void) | null>(null);
   const beatTimerRef = useRef<number | null>(null);
+
+  const rebuildPreview = useCallback(async (reason = "Building validated preview video…") => {
+    if (exportBusy) return;
+    setExportBusy(true);
+    setPreviewIssue(null);
+    setExportStatus(reason);
+    setPreviewValidation(emptyPreviewValidation(reason));
+    try {
+      const next = await renderPreviewReel(plan, clips, song, captionsEnabled, setExportStatus);
+      setRenderedReel((previous) => {
+        if (previous?.url) URL.revokeObjectURL(previous.url);
+        return next;
+      });
+      setPreviewValidation(next.validation);
+      setExportStatus(next.validation.message);
+    } catch (err) {
+      setPreviewIssue(err instanceof Error ? err.message : "Preview failed. Rebuilding video automatically.");
+      setPreviewValidation(emptyPreviewValidation("Preview failed. Rebuilding video automatically."));
+      if (renderAttempt < 1) {
+        setRenderAttempt((n) => n + 1);
+        window.setTimeout(() => void rebuildPreview("Preview failed. Rebuilding video automatically."), 700);
+      }
+    } finally {
+      setExportBusy(false);
+    }
+  }, [plan, clips, song, captionsEnabled, exportBusy, renderAttempt]);
 
   // Match cuts to actual uploaded clips by name (fall back to round-robin)
   const sequence = useMemo(() => {
