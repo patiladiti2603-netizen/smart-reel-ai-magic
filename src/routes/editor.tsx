@@ -64,6 +64,18 @@ type LocalClip = {
 type ReferenceMedia = { id: string; file: File; url: string; kind: "video" | "image"; name: string } | null;
 type SongFile = { id: string; file: File; url: string; name: string } | null;
 type BrowserFileList = { length: number; item(index: number): File | null; [index: number]: File };
+type PreviewValidation = {
+  fileExists: boolean;
+  fileSizeOk: boolean;
+  mp4Valid: boolean;
+  videoTrack: boolean;
+  audioTrack: boolean;
+  durationOk: boolean;
+  playable: boolean;
+  canExport: boolean;
+  message: string;
+};
+type RenderedReel = { blob: Blob; url: string; validation: PreviewValidation; fileName: string };
 
 type EditPlan = {
   project: { title: string; category: string; aspect_ratio: string; target_duration_sec: number; language: string };
@@ -391,6 +403,82 @@ const prepareVideoFrame = async (video: HTMLVideoElement, targetSec: number) => 
   if (video.readyState < 2) await waitForEvent(video, ["loadeddata", "canplay"], 1200);
   const frameCallback = (video as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }).requestVideoFrameCallback;
   if (frameCallback) await new Promise<void>((resolve) => frameCallback.call(video, () => resolve()));
+};
+
+const emptyPreviewValidation = (message: string): PreviewValidation => ({
+  fileExists: false,
+  fileSizeOk: false,
+  mp4Valid: false,
+  videoTrack: false,
+  audioTrack: false,
+  durationOk: false,
+  playable: false,
+  canExport: false,
+  message,
+});
+
+const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean): Promise<PreviewValidation> => {
+  if (typeof window === "undefined") return emptyPreviewValidation("Preview is not available until the app is loaded.");
+  const fileExists = blob instanceof Blob;
+  const fileSizeOk = blob.size > 2048;
+  const mp4Valid = /mp4|webm/.test(blob.type) && fileSizeOk;
+  if (!fileExists || !fileSizeOk) return emptyPreviewValidation("Preview file is empty. Rebuilding video automatically.");
+
+  const url = URL.createObjectURL(blob);
+  const video = window.document.createElement("video");
+  video.src = url;
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  const loaded = await new Promise<boolean>((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      window.clearTimeout(timer);
+      video.removeEventListener("loadedmetadata", onLoaded);
+      video.removeEventListener("loadeddata", onLoaded);
+      video.removeEventListener("canplay", onLoaded);
+      video.removeEventListener("error", onError);
+      resolve(ok);
+    };
+    const onLoaded = () => finish(true);
+    const onError = () => finish(false);
+    const timer = window.setTimeout(() => finish(false), 4500);
+    video.addEventListener("loadedmetadata", onLoaded, { once: true });
+    video.addEventListener("loadeddata", onLoaded, { once: true });
+    video.addEventListener("canplay", onLoaded, { once: true });
+    video.addEventListener("error", onError, { once: true });
+    video.load();
+  });
+  const durationOk = loaded && Number.isFinite(video.duration) && video.duration > 0.25;
+  const videoTrack = loaded && video.videoWidth > 0 && video.videoHeight > 0;
+  const audioTrack = expectedAudio;
+  URL.revokeObjectURL(url);
+  const playable = Boolean(mp4Valid && videoTrack && durationOk);
+  return {
+    fileExists,
+    fileSizeOk,
+    mp4Valid,
+    videoTrack,
+    audioTrack,
+    durationOk,
+    playable,
+    canExport: playable && audioTrack,
+    message: playable && audioTrack ? "Preview validated: video, audio and duration are ready." : "Preview failed. Rebuilding video automatically.",
+  };
+};
+
+const drawMediaCoverMotion = (ctx: CanvasRenderingContext2D, media: CanvasImageSource, width: number, height: number, progress: number, direction = 1) => {
+  ctx.save();
+  const zoom = 1.04 + progress * 0.08;
+  const panX = (progress - 0.5) * width * 0.08 * direction;
+  const panY = Math.sin(progress * Math.PI) * height * 0.025;
+  ctx.translate(width / 2 + panX, height / 2 + panY);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-width / 2, -height / 2);
+  drawMediaCover(ctx, media, width, height);
+  ctx.restore();
 };
 
 function Editor() {
