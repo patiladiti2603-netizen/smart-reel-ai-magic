@@ -1641,8 +1641,8 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
-async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongFile, captionsEnabled: boolean, onProgress: (message: string) => void) {
-  if (typeof window === "undefined") return;
+async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongFile, captionsEnabled: boolean, onProgress: (message: string) => void): Promise<RenderedReel> {
+  if (typeof window === "undefined") throw new Error("Preview renderer is not available yet.");
   const MediaRecorderCtor = window.MediaRecorder;
   if (!MediaRecorderCtor) throw new Error("Playable video export is not supported in this browser.");
   const usableClips = clips.filter((clip) => clip.decodeStatus !== "invalid" && (clip.kind === "image" || clip.frameVerified || clip.thumbnailUrl));
@@ -1656,6 +1656,17 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
   canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Could not prepare video renderer.");
+
+  const drawCover = (media: CanvasImageSource) => drawMediaCover(ctx, media, width, height);
+  ctx.fillStyle = "#07050f";
+  ctx.fillRect(0, 0, width, height);
+  const firstPoster = usableClips[0]?.thumbnailUrl || (usableClips[0]?.kind === "image" ? usableClips[0].url : "");
+  if (firstPoster) {
+    const img = new Image();
+    img.src = firstPoster;
+    await img.decode().catch(() => undefined);
+    if (img.naturalWidth) drawCover(img);
+  }
 
   const stream = canvas.captureStream(30);
   if (stream.getVideoTracks().length === 0) throw new Error("Video rendering issue detected. Rebuilding cinematic timeline…");
@@ -1728,8 +1739,6 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
     if (event.data.size > 0) chunks.push(event.data);
   };
 
-  const drawCover = (media: CanvasImageSource) => drawMediaCover(ctx, media, width, height);
-
   const loadPoster = async (clip: LocalClip) => {
     if (!clip.thumbnailUrl) return null;
     const image = new Image();
@@ -1794,14 +1803,15 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
       await video.play().catch(() => undefined);
       const start = window.performance.now();
       while (window.performance.now() - start < durationMs) {
+        const localProgress = Math.min(1, (window.performance.now() - start) / durationMs);
         ctx.fillStyle = "#07050f";
         ctx.fillRect(0, 0, width, height);
         ctx.filter = filter;
         if (video.readyState >= 2 && video.videoWidth > 0) {
-          drawCover(video);
+          drawMediaCoverMotion(ctx, video, width, height, localProgress, i % 2 === 0 ? 1 : -1);
           visibleFrameCount += 1;
         } else if (poster) {
-          drawCover(poster);
+          drawMediaCoverMotion(ctx, poster, width, height, localProgress, i % 2 === 0 ? 1 : -1);
           visibleFrameCount += 1;
         } else {
           ctx.filter = "none";
@@ -1824,11 +1834,14 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
       await image.decode().catch(() => undefined);
       const start = window.performance.now();
       while (window.performance.now() - start < durationMs) {
+        const localProgress = Math.min(1, (window.performance.now() - start) / durationMs);
         ctx.fillStyle = "#07050f";
         ctx.fillRect(0, 0, width, height);
         ctx.filter = filter;
-        drawCover(image);
-        visibleFrameCount += 1;
+        if (image.naturalWidth) {
+          drawMediaCoverMotion(ctx, image, width, height, localProgress, i % 2 === 0 ? 1 : -1);
+          visibleFrameCount += 1;
+        }
         drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
         await new Promise((resolve) => window.requestAnimationFrame(resolve));
       }
@@ -1848,13 +1861,24 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
   onProgress("Muxing H.264 MP4 with video + audio…");
   const mp4Blob = await transcodeRecordingToMp4(blob);
   if (mp4Blob.size < 2048) throw new Error("Export validation failed: MP4 muxing produced an empty file.");
+  const validation = await validateRenderedVideo(mp4Blob, Boolean(audioCtx));
+  if (!validation.playable) throw new Error(validation.message);
   const url = URL.createObjectURL(mp4Blob);
-  const link = window.document.createElement("a");
-  link.href = url;
-  link.download = `${plan.project.title.replace(/\s+/g, "-").toLowerCase()}-final-reel.mp4`;
-  link.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return {
+    blob: mp4Blob,
+    url,
+    validation,
+    fileName: `${plan.project.title.replace(/\s+/g, "-").toLowerCase()}-final-reel.mp4`,
+  };
 }
+
+const downloadRenderedReel = (rendered: RenderedReel) => {
+  if (typeof window === "undefined") return;
+  const link = window.document.createElement("a");
+  link.href = rendered.url;
+  link.download = rendered.fileName;
+  link.click();
+};
 
 /* ---------- Preview screen with sequential clip player ---------- */
 
