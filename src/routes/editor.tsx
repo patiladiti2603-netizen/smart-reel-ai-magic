@@ -64,6 +64,18 @@ type LocalClip = {
 type ReferenceMedia = { id: string; file: File; url: string; kind: "video" | "image"; name: string } | null;
 type SongFile = { id: string; file: File; url: string; name: string } | null;
 type BrowserFileList = { length: number; item(index: number): File | null; [index: number]: File };
+type PreviewValidation = {
+  fileExists: boolean;
+  fileSizeOk: boolean;
+  mp4Valid: boolean;
+  videoTrack: boolean;
+  audioTrack: boolean;
+  durationOk: boolean;
+  playable: boolean;
+  canExport: boolean;
+  message: string;
+};
+type RenderedReel = { blob: Blob; url: string; validation: PreviewValidation; fileName: string };
 
 type EditPlan = {
   project: { title: string; category: string; aspect_ratio: string; target_duration_sec: number; language: string };
@@ -344,7 +356,7 @@ const repairVideoWithFfmpeg = async (clip: LocalClip) => {
   return URL.createObjectURL(blob);
 };
 
-const transcodeRecordingToMp4 = async (blob: Blob) => {
+const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: number, bpm: number) => {
   const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
     import("@ffmpeg/ffmpeg"),
     import("@ffmpeg/util"),
@@ -355,18 +367,44 @@ const transcodeRecordingToMp4 = async (blob: Blob) => {
     wasmURL: await toBlobURL(ffmpegWasmUrl, "application/wasm"),
   });
   await ffmpeg.writeFile("render.webm", await fetchFile(blob));
-  await ffmpeg.exec([
-    "-i", "render.webm",
-    "-map", "0:v:0",
-    "-map", "0:a?",
-    "-c:v", "libx264",
-    "-preset", "veryfast",
-    "-pix_fmt", "yuv420p",
-    "-c:a", "aac",
-    "-b:a", "160k",
-    "-movflags", "+faststart",
-    "smart-reel-final.mp4",
-  ]);
+  if (song) {
+    const ext = song.name.split(".").pop()?.replace(/[^a-z0-9]/gi, "").toLowerCase() || "mp3";
+    const songName = `song.${ext}`;
+    await ffmpeg.writeFile(songName, await fetchFile(song.file));
+    await ffmpeg.exec([
+      "-i", "render.webm",
+      "-stream_loop", "-1",
+      "-i", songName,
+      "-map", "0:v:0",
+      "-map", "1:a:0",
+      "-shortest",
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-movflags", "+faststart",
+      "smart-reel-final.mp4",
+    ]);
+    await ffmpeg.deleteFile(songName).catch(() => undefined);
+  } else {
+    const beatFrequency = Math.round(Math.max(80, Math.min(180, bpm || 110)));
+    await ffmpeg.exec([
+      "-i", "render.webm",
+      "-f", "lavfi",
+      "-i", `sine=frequency=${beatFrequency}:duration=${Math.max(1, durationSec).toFixed(2)}`,
+      "-map", "0:v:0",
+      "-map", "1:a:0",
+      "-shortest",
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "160k",
+      "-movflags", "+faststart",
+      "smart-reel-final.mp4",
+    ]);
+  }
   const data = await ffmpeg.readFile("smart-reel-final.mp4");
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(String(data));
   const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
@@ -391,6 +429,82 @@ const prepareVideoFrame = async (video: HTMLVideoElement, targetSec: number) => 
   if (video.readyState < 2) await waitForEvent(video, ["loadeddata", "canplay"], 1200);
   const frameCallback = (video as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }).requestVideoFrameCallback;
   if (frameCallback) await new Promise<void>((resolve) => frameCallback.call(video, () => resolve()));
+};
+
+const emptyPreviewValidation = (message: string): PreviewValidation => ({
+  fileExists: false,
+  fileSizeOk: false,
+  mp4Valid: false,
+  videoTrack: false,
+  audioTrack: false,
+  durationOk: false,
+  playable: false,
+  canExport: false,
+  message,
+});
+
+const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean): Promise<PreviewValidation> => {
+  if (typeof window === "undefined") return emptyPreviewValidation("Preview is not available until the app is loaded.");
+  const fileExists = blob instanceof Blob;
+  const fileSizeOk = blob.size > 2048;
+  const mp4Valid = /mp4|webm/.test(blob.type) && fileSizeOk;
+  if (!fileExists || !fileSizeOk) return emptyPreviewValidation("Preview file is empty. Rebuilding video automatically.");
+
+  const url = URL.createObjectURL(blob);
+  const video = window.document.createElement("video");
+  video.src = url;
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  const loaded = await new Promise<boolean>((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      window.clearTimeout(timer);
+      video.removeEventListener("loadedmetadata", onLoaded);
+      video.removeEventListener("loadeddata", onLoaded);
+      video.removeEventListener("canplay", onLoaded);
+      video.removeEventListener("error", onError);
+      resolve(ok);
+    };
+    const onLoaded = () => finish(true);
+    const onError = () => finish(false);
+    const timer = window.setTimeout(() => finish(false), 4500);
+    video.addEventListener("loadedmetadata", onLoaded, { once: true });
+    video.addEventListener("loadeddata", onLoaded, { once: true });
+    video.addEventListener("canplay", onLoaded, { once: true });
+    video.addEventListener("error", onError, { once: true });
+    video.load();
+  });
+  const durationOk = loaded && Number.isFinite(video.duration) && video.duration > 0.25;
+  const videoTrack = loaded && video.videoWidth > 0 && video.videoHeight > 0;
+  const audioTrack = expectedAudio;
+  URL.revokeObjectURL(url);
+  const playable = Boolean(mp4Valid && videoTrack && durationOk);
+  return {
+    fileExists,
+    fileSizeOk,
+    mp4Valid,
+    videoTrack,
+    audioTrack,
+    durationOk,
+    playable,
+    canExport: playable && audioTrack,
+    message: playable && audioTrack ? "Preview validated: video, audio and duration are ready." : "Preview failed. Rebuilding video automatically.",
+  };
+};
+
+const drawMediaCoverMotion = (ctx: CanvasRenderingContext2D, media: CanvasImageSource, width: number, height: number, progress: number, direction = 1) => {
+  ctx.save();
+  const zoom = 1.04 + progress * 0.08;
+  const panX = (progress - 0.5) * width * 0.08 * direction;
+  const panY = Math.sin(progress * Math.PI) * height * 0.025;
+  ctx.translate(width / 2 + panX, height / 2 + panY);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-width / 2, -height / 2);
+  drawMediaCover(ctx, media, width, height);
+  ctx.restore();
 };
 
 function Editor() {
@@ -1553,8 +1667,8 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
-async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongFile, captionsEnabled: boolean, onProgress: (message: string) => void) {
-  if (typeof window === "undefined") return;
+async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongFile, captionsEnabled: boolean, onProgress: (message: string) => void): Promise<RenderedReel> {
+  if (typeof window === "undefined") throw new Error("Preview renderer is not available yet.");
   const MediaRecorderCtor = window.MediaRecorder;
   if (!MediaRecorderCtor) throw new Error("Playable video export is not supported in this browser.");
   const usableClips = clips.filter((clip) => clip.decodeStatus !== "invalid" && (clip.kind === "image" || clip.frameVerified || clip.thumbnailUrl));
@@ -1568,6 +1682,17 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
   canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Could not prepare video renderer.");
+
+  const drawCover = (media: CanvasImageSource) => drawMediaCover(ctx, media, width, height);
+  ctx.fillStyle = "#07050f";
+  ctx.fillRect(0, 0, width, height);
+  const firstPoster = usableClips[0]?.thumbnailUrl || (usableClips[0]?.kind === "image" ? usableClips[0].url : "");
+  if (firstPoster) {
+    const img = new Image();
+    img.src = firstPoster;
+    await img.decode().catch(() => undefined);
+    if (img.naturalWidth) drawCover(img);
+  }
 
   const stream = canvas.captureStream(30);
   if (stream.getVideoTracks().length === 0) throw new Error("Video rendering issue detected. Rebuilding cinematic timeline…");
@@ -1640,8 +1765,6 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
     if (event.data.size > 0) chunks.push(event.data);
   };
 
-  const drawCover = (media: CanvasImageSource) => drawMediaCover(ctx, media, width, height);
-
   const loadPoster = async (clip: LocalClip) => {
     if (!clip.thumbnailUrl) return null;
     const image = new Image();
@@ -1706,14 +1829,15 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
       await video.play().catch(() => undefined);
       const start = window.performance.now();
       while (window.performance.now() - start < durationMs) {
+        const localProgress = Math.min(1, (window.performance.now() - start) / durationMs);
         ctx.fillStyle = "#07050f";
         ctx.fillRect(0, 0, width, height);
         ctx.filter = filter;
         if (video.readyState >= 2 && video.videoWidth > 0) {
-          drawCover(video);
+          drawMediaCoverMotion(ctx, video, width, height, localProgress, i % 2 === 0 ? 1 : -1);
           visibleFrameCount += 1;
         } else if (poster) {
-          drawCover(poster);
+          drawMediaCoverMotion(ctx, poster, width, height, localProgress, i % 2 === 0 ? 1 : -1);
           visibleFrameCount += 1;
         } else {
           ctx.filter = "none";
@@ -1736,11 +1860,14 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
       await image.decode().catch(() => undefined);
       const start = window.performance.now();
       while (window.performance.now() - start < durationMs) {
+        const localProgress = Math.min(1, (window.performance.now() - start) / durationMs);
         ctx.fillStyle = "#07050f";
         ctx.fillRect(0, 0, width, height);
         ctx.filter = filter;
-        drawCover(image);
-        visibleFrameCount += 1;
+        if (image.naturalWidth) {
+          drawMediaCoverMotion(ctx, image, width, height, localProgress, i % 2 === 0 ? 1 : -1);
+          visibleFrameCount += 1;
+        }
         drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
         await new Promise((resolve) => window.requestAnimationFrame(resolve));
       }
@@ -1758,15 +1885,27 @@ async function exportPreviewWebm(plan: EditPlan, clips: LocalClip[], song: SongF
   await audioCtx?.close().catch(() => undefined);
   if (blob.size < 2048) throw new Error("Export validation failed: no video frames were encoded.");
   onProgress("Muxing H.264 MP4 with video + audio…");
-  const mp4Blob = await transcodeRecordingToMp4(blob);
+  const finalDuration = Math.max(1, renderedSec || plan.project.target_duration_sec || 12);
+  const mp4Blob = await transcodeRecordingToMp4(blob, song, finalDuration, plan.music.bpm_estimate || 110);
   if (mp4Blob.size < 2048) throw new Error("Export validation failed: MP4 muxing produced an empty file.");
+  const validation = await validateRenderedVideo(mp4Blob, true);
+  if (!validation.playable) throw new Error(validation.message);
   const url = URL.createObjectURL(mp4Blob);
-  const link = window.document.createElement("a");
-  link.href = url;
-  link.download = `${plan.project.title.replace(/\s+/g, "-").toLowerCase()}-final-reel.mp4`;
-  link.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return {
+    blob: mp4Blob,
+    url,
+    validation,
+    fileName: `${plan.project.title.replace(/\s+/g, "-").toLowerCase()}-final-reel.mp4`,
+  };
 }
+
+const downloadRenderedReel = (rendered: RenderedReel) => {
+  if (typeof window === "undefined") return;
+  const link = window.document.createElement("a");
+  link.href = rendered.url;
+  link.download = rendered.fileName;
+  link.click();
+};
 
 /* ---------- Preview screen with sequential clip player ---------- */
 
@@ -1796,13 +1935,63 @@ function PreviewScreen({
   const [previewIssue, setPreviewIssue] = useState<string | null>(null);
   const [exportBusy, setExportBusy] = useState(false);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [renderedReel, setRenderedReel] = useState<RenderedReel | null>(null);
+  const [previewValidation, setPreviewValidation] = useState<PreviewValidation>(() => emptyPreviewValidation("Rendering preview video…"));
+  const [renderAttempt, setRenderAttempt] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const renderedVideoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const imageTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const synthCleanupRef = useRef<(() => void) | null>(null);
   const beatTimerRef = useRef<number | null>(null);
+
+  const rebuildPreview = useCallback(async (reason = "Building validated preview video…") => {
+    if (exportBusy) return;
+    setExportBusy(true);
+    setPreviewIssue(null);
+    setExportStatus(reason);
+    setPreviewValidation(emptyPreviewValidation(reason));
+    try {
+      const next = await renderPreviewReel(plan, clips, song, captionsEnabled, setExportStatus);
+      setRenderedReel((previous) => {
+        if (previous?.url) URL.revokeObjectURL(previous.url);
+        return next;
+      });
+      setPreviewValidation(next.validation);
+      setExportStatus(next.validation.message);
+    } catch (err) {
+      setPreviewIssue(err instanceof Error ? err.message : "Preview failed. Rebuilding video automatically.");
+      setPreviewValidation(emptyPreviewValidation("Preview failed. Rebuilding video automatically."));
+      if (renderAttempt < 1) {
+        setRenderAttempt((n) => n + 1);
+        window.setTimeout(() => void rebuildPreview("Preview failed. Rebuilding video automatically."), 700);
+      }
+    } finally {
+      setExportBusy(false);
+    }
+  }, [plan, clips, song, captionsEnabled, exportBusy, renderAttempt]);
+
+  useEffect(() => {
+    setRenderAttempt(0);
+    void rebuildPreview("Building validated preview video…");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, clips, song, captionsEnabled]);
+
+  useEffect(() => () => {
+    if (renderedReel?.url) URL.revokeObjectURL(renderedReel.url);
+  }, [renderedReel?.url]);
+
+  const validationRows = useMemo(() => [
+    ["File exists", previewValidation.fileExists],
+    ["File size > 0", previewValidation.fileSizeOk],
+    ["MP4/WebM valid", previewValidation.mp4Valid],
+    ["Video track", previewValidation.videoTrack],
+    ["Audio track", previewValidation.audioTrack],
+    ["Duration > 0", previewValidation.durationOk],
+    ["Preview playable", previewValidation.playable],
+  ] as const, [previewValidation]);
 
   // Match cuts to actual uploaded clips by name (fall back to round-robin)
   const sequence = useMemo(() => {
@@ -1857,6 +2046,14 @@ function PreviewScreen({
 
   const seekTo = useCallback((targetSec: number) => {
     const bounded = Math.max(0, Math.min(targetSec, previewDuration));
+    const renderedVideo = renderedVideoRef.current;
+    if (renderedVideo) {
+      try {
+        renderedVideo.currentTime = bounded;
+        setElapsed(bounded);
+      } catch {}
+      return;
+    }
     if (sequence.length === 0) return;
     const idx = Math.max(0, cutStarts.findIndex((start, i) => bounded >= start && bounded < start + (sequence[i]?.cutDuration ?? 0)));
     const nextIdx = idx === -1 ? Math.max(0, sequence.length - 1) : idx;
@@ -2019,7 +2216,7 @@ function PreviewScreen({
   const togglePlay = () => {
     setPlaying((p) => {
       const next = !p;
-      const v = videoRef.current;
+      const v = renderedVideoRef.current ?? videoRef.current;
       const a = audioRef.current;
       if (v) {
         if (next) v.play().catch(() => setPreviewIssue("Tap Play again if your browser blocked autoplay."));
@@ -2041,6 +2238,7 @@ function PreviewScreen({
 
   // start/stop song with the reel
   useEffect(() => {
+    if (renderedReel) return;
     if (!song) {
       if (playing) startAiSongBed();
       else stopAiSongBed();
@@ -2062,7 +2260,7 @@ function PreviewScreen({
     });
     else a.pause();
     return () => stopAiSongBed();
-  }, [playing, song, elapsed, previewDuration, plan.music.audio_mix, startAiSongBed, stopAiSongBed]);
+  }, [playing, song, elapsed, previewDuration, plan.music.audio_mix, startAiSongBed, stopAiSongBed, renderedReel]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !playing) return;
@@ -2086,17 +2284,12 @@ function PreviewScreen({
 
   const downloadPlayablePreview = async () => {
     if (exportBusy) return;
-    setExportBusy(true);
-    setExportStatus("Preparing playable preview…");
-    try {
-      await exportPreviewWebm(plan, clips, song, captionsEnabled, setExportStatus);
-      setExportStatus("Playable preview downloaded with audio");
-    } catch (err) {
-      setPreviewIssue(err instanceof Error ? err.message : "Video export failed in this browser.");
-    } finally {
-      setExportBusy(false);
-      if (typeof window !== "undefined") window.setTimeout(() => setExportStatus(null), 3000);
+    if (!renderedReel || !previewValidation.canExport) {
+      await rebuildPreview("Preview failed. Rebuilding video automatically.");
+      return;
     }
+    downloadRenderedReel(renderedReel);
+    setExportStatus("Validated MP4 downloaded with video + audio");
   };
 
   return (
@@ -2126,80 +2319,56 @@ function PreviewScreen({
 
         <div
           ref={containerRef}
-          onClick={() => {
-            if (song) enableAudioGraph().finally(() => audioRef.current?.play().then(() => {
-              setAudioEnabled(true);
-              setNeedsAudioTap(false);
-            }).catch(() => {
-              setAudioEnabled(false);
-              setNeedsAudioTap(true);
-            }));
-          }}
           className={"relative mx-auto overflow-hidden rounded-xl bg-gradient-to-br from-[#16091f] via-black to-[#071022] sr-grain sr-vignette " + (isPortrait ? "aspect-[9/16] max-w-[280px]" : "aspect-video w-full")}
         >
-          {current?.clip ? (
-            current.clip.kind === "video" ? (
-              <video
-                ref={videoRef}
-                key={current.clip.id + cutIdx}
-                src={current.clip.url}
-                poster={current.clip.thumbnailUrl}
-                className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
-                style={{ filter, animationName: cinematicAnim, transform: beatPulse ? "scale(1.025)" : undefined }}
-                muted
-                playsInline
-                preload="auto"
-                controls={false}
-                onLoadedData={() => setMediaReady(true)}
-                onCanPlay={() => setMediaReady(true)}
-                onError={() => {
-                  setMediaReady(true);
-                  setPreviewIssue("This clip could not decode here. Smart Reel is using the verified thumbnail and repaired export path.");
-                }}
-                onTimeUpdate={onTimeUpdate}
-                onEnded={advance}
-              />
-            ) : (
-              <img
-                key={current.clip.id + cutIdx}
-                src={current.clip.url}
-                alt=""
-                className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
-                style={{ filter, animationName: cinematicAnim, transform: beatPulse ? "scale(1.025)" : undefined }}
-                onLoad={() => setMediaReady(true)}
-              />
-            )
+          {renderedReel?.url ? (
+            <video
+              ref={renderedVideoRef}
+              key={renderedReel.url}
+              src={renderedReel.url}
+              className="h-full w-full object-cover"
+              controls
+              autoPlay
+              playsInline
+              preload="auto"
+              onLoadedMetadata={(event) => {
+                const video = event.currentTarget;
+                setMediaReady(true);
+                setElapsed(video.currentTime || 0);
+              }}
+              onTimeUpdate={(event) => setElapsed(event.currentTarget.currentTime || 0)}
+              onPlay={() => setPlaying(true)}
+              onPause={() => setPlaying(false)}
+              onError={() => {
+                setPreviewIssue("Preview failed. Rebuilding video automatically.");
+                setRenderedReel((previous) => {
+                  if (previous?.url) URL.revokeObjectURL(previous.url);
+                  return null;
+                });
+                void rebuildPreview("Preview failed. Rebuilding video automatically.");
+              }}
+            />
+          ) : current?.clip ? (
+            <img
+              src={current.clip.thumbnailUrl || current.clip.url}
+              alt=""
+              className={"h-full w-full object-cover sr-cinematic " + cinematicAnim}
+              style={{ filter, animationName: cinematicAnim, transform: beatPulse ? "scale(1.025)" : undefined }}
+              onLoad={() => setMediaReady(true)}
+            />
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-white/50">No clips loaded</div>
           )}
 
-          {current?.clip && !mediaReady && (
+          {(!renderedReel || exportBusy) && (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-fuchsia-950/70 via-black/80 to-blue-950/70 px-6 text-center">
-              <Film className="h-8 w-8 text-fuchsia-200" />
-              <p className="mt-3 text-sm font-medium text-white/85">Preparing HD preview frame</p>
-              <p className="mt-1 max-w-[220px] truncate text-xs text-white/45">{current.clip.name}</p>
+              <Loader2 className="h-8 w-8 animate-spin text-fuchsia-200" />
+              <p className="mt-3 text-sm font-medium text-white/85">{exportStatus || "Building validated preview video…"}</p>
+              <p className="mt-1 max-w-[240px] text-xs text-white/45">Photos/clips, transitions and music are being muxed into one playable file.</p>
             </div>
           )}
 
-          {song && (
-            <audio ref={audioRef} src={song.url} loop preload="auto" crossOrigin="anonymous" />
-          )}
-
-          {song && needsAudioTap && (
-            <div className="pointer-events-none absolute inset-x-4 top-1/2 z-10 -translate-y-1/2 rounded-xl border border-fuchsia-300/25 bg-black/65 px-4 py-3 text-center text-xs text-white/85 backdrop-blur">
-              Tap preview to enable audible song mix
-            </div>
-          )}
-
-          {activeText && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-8 px-4 text-center">
-              <span className="inline-block rounded-md bg-black/55 px-3 py-1.5 text-sm font-semibold tracking-wide text-white drop-shadow">
-                {activeText}
-              </span>
-            </div>
-          )}
-
-          {current?.cut.transition_in && (
+          {current?.cut.transition_in && !renderedReel && (
             <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-fuchsia-500/30 px-2 py-0.5 text-[10px] text-fuchsia-100 backdrop-blur">
               ↪ {current.cut.transition_in}
             </span>
@@ -2214,7 +2383,7 @@ function PreviewScreen({
           </button>
 
           <div className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-1 text-[10px] text-white/70 backdrop-blur">
-            {song ? (audioEnabled ? "Audio on" : "Tap for audio") : plan.music.selected_song || "AI song"}
+            {previewValidation.canExport ? "Video + audio ok" : "Validating media"}
           </div>
         </div>
 
@@ -2234,6 +2403,14 @@ function PreviewScreen({
             <span>{plan.music.beat_markers?.length ?? 0} beat markers · {plan.music.bass_drops?.length ?? 0} bass drops</span>
           </div>
           {previewIssue && <p className="rounded-lg border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{previewIssue}</p>}
+          <div className="grid grid-cols-2 gap-1.5 text-[11px] sm:grid-cols-4">
+            {validationRows.map(([label, ok]) => (
+              <span key={label} className={(ok ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100" : "border-amber-400/20 bg-amber-500/10 text-amber-100") + " inline-flex items-center gap-1 rounded-md border px-2 py-1"}>
+                {ok ? <CheckCircle2 className="h-3 w-3" /> : <RefreshCw className="h-3 w-3" />}
+                {label}
+              </span>
+            ))}
+          </div>
         </div>
 
         {/* timeline */}
@@ -2292,8 +2469,8 @@ function PreviewScreen({
 
       {/* actions */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <ActionBtn icon={Download} label={exportBusy ? "Rendering…" : "Video"} onClick={downloadPlayablePreview} primary />
-        <ActionBtn icon={Download} label="Export" onClick={onExport} primary />
+        <ActionBtn icon={Download} label={exportBusy ? "Rendering…" : "Download MP4"} onClick={downloadPlayablePreview} primary disabled={exportBusy || !previewValidation.canExport} />
+        <ActionBtn icon={Download} label="Export" onClick={downloadPlayablePreview} primary disabled={exportBusy || !previewValidation.canExport} />
         <ActionBtn icon={Save} label="Save" onClick={onSave} />
         <ActionBtn icon={RefreshCw} label="Edit again" onClick={onEditAgain} />
         <ActionBtn icon={Download} label="Plan JSON" onClick={onDownloadPlan} />
@@ -2319,15 +2496,16 @@ function PreviewScreen({
   );
 }
 
-function ActionBtn({ icon: Icon, label, onClick, primary }: { icon: React.ComponentType<{ className?: string }>; label: string; onClick: () => void; primary?: boolean }) {
+function ActionBtn({ icon: Icon, label, onClick, primary, disabled }: { icon: React.ComponentType<{ className?: string }>; label: string; onClick: () => void; primary?: boolean; disabled?: boolean }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       className={
         "inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-sm font-medium " +
         (primary
-          ? "bg-gradient-to-r from-fuchsia-500 to-blue-500 shadow-lg shadow-fuchsia-500/30"
-          : "border border-white/10 bg-white/[0.04] text-white/80 hover:text-white")
+          ? "bg-gradient-to-r from-fuchsia-500 to-blue-500 shadow-lg shadow-fuchsia-500/30 disabled:cursor-not-allowed disabled:opacity-45"
+          : "border border-white/10 bg-white/[0.04] text-white/80 hover:text-white disabled:cursor-not-allowed disabled:opacity-45")
       }
     >
       <Icon className="h-4 w-4" />
