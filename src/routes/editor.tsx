@@ -2316,6 +2316,10 @@ function PreviewScreen({
               onPause={() => setPlaying(false)}
               onError={() => {
                 setPreviewIssue("Preview failed. Rebuilding video automatically.");
+                setRenderedReel((previous) => {
+                  if (previous?.url) URL.revokeObjectURL(previous.url);
+                  return null;
+                });
                 void rebuildPreview("Preview failed. Rebuilding video automatically.");
               }}
             />
@@ -2374,6 +2378,14 @@ function PreviewScreen({
             <span>{plan.music.beat_markers?.length ?? 0} beat markers · {plan.music.bass_drops?.length ?? 0} bass drops</span>
           </div>
           {previewIssue && <p className="rounded-lg border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{previewIssue}</p>}
+          <div className="grid grid-cols-2 gap-1.5 text-[11px] sm:grid-cols-4">
+            {validationRows.map(([label, ok]) => (
+              <span key={label} className={(ok ? "border-emerald-400/20 bg-emerald-500/10 text-emerald-100" : "border-amber-400/20 bg-amber-500/10 text-amber-100") + " inline-flex items-center gap-1 rounded-md border px-2 py-1"}>
+                {ok ? <CheckCircle2 className="h-3 w-3" /> : <RefreshCw className="h-3 w-3" />}
+                {label}
+              </span>
+            ))}
+          </div>
         </div>
 
         {/* timeline */}
@@ -2432,8 +2444,8 @@ function PreviewScreen({
 
       {/* actions */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <ActionBtn icon={Download} label={exportBusy ? "Rendering…" : "Video"} onClick={downloadPlayablePreview} primary />
-        <ActionBtn icon={Download} label="Export" onClick={onExport} primary />
+        <ActionBtn icon={Download} label={exportBusy ? "Rendering…" : "Download MP4"} onClick={downloadPlayablePreview} primary disabled={exportBusy || !previewValidation.canExport} />
+        <ActionBtn icon={Download} label="Export" onClick={downloadPlayablePreview} primary disabled={exportBusy || !previewValidation.canExport} />
         <ActionBtn icon={Save} label="Save" onClick={onSave} />
         <ActionBtn icon={RefreshCw} label="Edit again" onClick={onEditAgain} />
         <ActionBtn icon={Download} label="Plan JSON" onClick={onDownloadPlan} />
@@ -2459,15 +2471,16 @@ function PreviewScreen({
   );
 }
 
-function ActionBtn({ icon: Icon, label, onClick, primary }: { icon: React.ComponentType<{ className?: string }>; label: string; onClick: () => void; primary?: boolean }) {
+function ActionBtn({ icon: Icon, label, onClick, primary, disabled }: { icon: React.ComponentType<{ className?: string }>; label: string; onClick: () => void; primary?: boolean; disabled?: boolean }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       className={
         "inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-sm font-medium " +
         (primary
-          ? "bg-gradient-to-r from-fuchsia-500 to-blue-500 shadow-lg shadow-fuchsia-500/30"
-          : "border border-white/10 bg-white/[0.04] text-white/80 hover:text-white")
+          ? "bg-gradient-to-r from-fuchsia-500 to-blue-500 shadow-lg shadow-fuchsia-500/30 disabled:cursor-not-allowed disabled:opacity-45"
+          : "border border-white/10 bg-white/[0.04] text-white/80 hover:text-white disabled:cursor-not-allowed disabled:opacity-45")
       }
     >
       <Icon className="h-4 w-4" />
