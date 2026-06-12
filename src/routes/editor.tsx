@@ -1885,9 +1885,10 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
   await audioCtx?.close().catch(() => undefined);
   if (blob.size < 2048) throw new Error("Export validation failed: no video frames were encoded.");
   onProgress("Muxing H.264 MP4 with video + audio…");
-  const mp4Blob = await transcodeRecordingToMp4(blob);
+  const finalDuration = Math.max(1, renderedSec || plan.project.target_duration_sec || 12);
+  const mp4Blob = await transcodeRecordingToMp4(blob, song, finalDuration, plan.music.bpm_estimate || 110);
   if (mp4Blob.size < 2048) throw new Error("Export validation failed: MP4 muxing produced an empty file.");
-  const validation = await validateRenderedVideo(mp4Blob, Boolean(audioCtx));
+  const validation = await validateRenderedVideo(mp4Blob, true);
   if (!validation.playable) throw new Error(validation.message);
   const url = URL.createObjectURL(mp4Blob);
   return {
