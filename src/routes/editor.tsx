@@ -2183,7 +2183,7 @@ function PreviewScreen({
   const togglePlay = () => {
     setPlaying((p) => {
       const next = !p;
-      const v = videoRef.current;
+      const v = renderedVideoRef.current ?? videoRef.current;
       const a = audioRef.current;
       if (v) {
         if (next) v.play().catch(() => setPreviewIssue("Tap Play again if your browser blocked autoplay."));
@@ -2205,6 +2205,7 @@ function PreviewScreen({
 
   // start/stop song with the reel
   useEffect(() => {
+    if (renderedReel) return;
     if (!song) {
       if (playing) startAiSongBed();
       else stopAiSongBed();
@@ -2226,7 +2227,7 @@ function PreviewScreen({
     });
     else a.pause();
     return () => stopAiSongBed();
-  }, [playing, song, elapsed, previewDuration, plan.music.audio_mix, startAiSongBed, stopAiSongBed]);
+  }, [playing, song, elapsed, previewDuration, plan.music.audio_mix, startAiSongBed, stopAiSongBed, renderedReel]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !playing) return;
@@ -2250,17 +2251,12 @@ function PreviewScreen({
 
   const downloadPlayablePreview = async () => {
     if (exportBusy) return;
-    setExportBusy(true);
-    setExportStatus("Preparing playable preview…");
-    try {
-      await exportPreviewWebm(plan, clips, song, captionsEnabled, setExportStatus);
-      setExportStatus("Playable preview downloaded with audio");
-    } catch (err) {
-      setPreviewIssue(err instanceof Error ? err.message : "Video export failed in this browser.");
-    } finally {
-      setExportBusy(false);
-      if (typeof window !== "undefined") window.setTimeout(() => setExportStatus(null), 3000);
+    if (!renderedReel || !previewValidation.canExport) {
+      await rebuildPreview("Preview failed. Rebuilding video automatically.");
+      return;
     }
+    downloadRenderedReel(renderedReel);
+    setExportStatus("Validated MP4 downloaded with video + audio");
   };
 
   return (
