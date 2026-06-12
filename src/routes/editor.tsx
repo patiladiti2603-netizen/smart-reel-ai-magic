@@ -1912,6 +1912,7 @@ function PreviewScreen({
   const [previewValidation, setPreviewValidation] = useState<PreviewValidation>(() => emptyPreviewValidation("Rendering preview video…"));
   const [renderAttempt, setRenderAttempt] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const renderedVideoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const imageTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1944,6 +1945,28 @@ function PreviewScreen({
       setExportBusy(false);
     }
   }, [plan, clips, song, captionsEnabled, exportBusy, renderAttempt]);
+
+  useEffect(() => {
+    setRenderAttempt(0);
+    void rebuildPreview("Building validated preview video…");
+    return () => {
+      setRenderedReel((previous) => {
+        if (previous?.url) URL.revokeObjectURL(previous.url);
+        return null;
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, clips, song, captionsEnabled]);
+
+  const validationRows = useMemo(() => [
+    ["File exists", previewValidation.fileExists],
+    ["File size > 0", previewValidation.fileSizeOk],
+    ["MP4/WebM valid", previewValidation.mp4Valid],
+    ["Video track", previewValidation.videoTrack],
+    ["Audio track", previewValidation.audioTrack],
+    ["Duration > 0", previewValidation.durationOk],
+    ["Preview playable", previewValidation.playable],
+  ] as const, [previewValidation]);
 
   // Match cuts to actual uploaded clips by name (fall back to round-robin)
   const sequence = useMemo(() => {
