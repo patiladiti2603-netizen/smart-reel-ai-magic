@@ -1976,14 +1976,12 @@ function PreviewScreen({
   useEffect(() => {
     setRenderAttempt(0);
     void rebuildPreview("Building validated preview video…");
-    return () => {
-      setRenderedReel((previous) => {
-        if (previous?.url) URL.revokeObjectURL(previous.url);
-        return null;
-      });
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan, clips, song, captionsEnabled]);
+
+  useEffect(() => () => {
+    if (renderedReel?.url) URL.revokeObjectURL(renderedReel.url);
+  }, [renderedReel?.url]);
 
   const validationRows = useMemo(() => [
     ["File exists", previewValidation.fileExists],
