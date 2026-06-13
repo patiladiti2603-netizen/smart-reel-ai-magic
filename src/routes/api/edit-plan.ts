@@ -126,9 +126,9 @@ QUALITY MODES:
 - "Basic Edit": clean simple cuts on beat, minimal effects.
 
 CATEGORY DEFAULTS:
-- Instagram Reel: 9:16, 15-30s, beat-synced viral pacing.
-- Weddings/Haldi/Engagement: warm golden grade, slow-mo hero, romantic Marathi tracks.
-- Travel/Party: vibrant grade, energetic cuts, drone-style motion.
+- Instagram Trending Reel / Instagram Reel: 9:16, 15-30s, beat-synced viral pacing, current trending transitions (whip pan, zoom punch, velocity edit), bold kinetic text if captions enabled.
+- Weddings/Haldi/Engagement/Couple Reel: warm golden grade, slow-mo hero, romantic Marathi/Hindi tracks.
+- Travel/Party/Festival/College/Business: vibrant grade, energetic cuts, drone-style or branded motion.
 
 OUTPUT RULES:
 - Only reference clip_ref values from the provided clip list. Never invent clips.

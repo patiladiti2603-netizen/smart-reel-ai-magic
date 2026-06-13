@@ -99,7 +99,7 @@ type EditPlan = {
 
 type SavedProject = { id: string; title: string; savedAt: number; category: string; language: string; platform: string; instructions: string; reference: string; selected: Record<string, string[]>; selectedSongTitle?: string; plan: EditPlan | null };
 
-const CATEGORIES = ["Instagram Reel", "Wedding", "Haldi", "Mehendi", "Birthday", "Engagement", "Couple Reel", "Travel", "Party", "College Event", "Family Function", "Baby Shoot", "Gym Reel", "Festival", "Vlog"];
+const CATEGORIES = ["Instagram Trending Reel", "Instagram Reel", "Wedding", "Haldi", "Mehendi", "Birthday", "Engagement", "Couple Reel", "Travel", "Party", "College Event", "Family Function", "Baby Shoot", "Gym Reel", "Festival", "Business", "Vlog"];
 const PLATFORMS = ["Instagram Reel", "YouTube", "WhatsApp Status"] as const;
 const LANGUAGES = ["Marathi", "Hindi", "English"];
 
@@ -979,34 +979,34 @@ function Editor() {
   };
 
   return (
-    <div className="min-h-screen bg-[#07050f] text-white">
-      <div className="pointer-events-none fixed inset-0 -z-10">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-[#07050f] text-white">
+      <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
         <div className="absolute -top-40 -left-40 h-[460px] w-[460px] rounded-full bg-fuchsia-600/20 blur-[120px]" />
         <div className="absolute bottom-0 -right-40 h-[460px] w-[460px] rounded-full bg-blue-600/20 blur-[120px]" />
       </div>
 
       <header className="sticky top-0 z-20 border-b border-white/5 bg-[#07050f]/70 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
-          <Link to="/" className="flex items-center gap-2 text-sm text-white/70 hover:text-white">
-            <ArrowLeft className="h-4 w-4" />
-            Back
+        <div className="mx-auto grid w-full max-w-6xl grid-cols-[auto_1fr_auto] items-center gap-2 px-3 py-3 sm:px-5 sm:py-4">
+          <Link to="/" className="flex min-w-0 items-center gap-1.5 text-xs text-white/70 hover:text-white sm:text-sm">
+            <ArrowLeft className="h-4 w-4 shrink-0" />
+            <span className="hidden sm:inline">Back</span>
           </Link>
-          <Link to="/" className="flex items-center gap-2">
-            <img src={logo} alt="" className="h-8 w-8" />
-            <span className="text-base font-semibold">Smart Reel</span>
+          <Link to="/" className="flex min-w-0 items-center justify-center gap-2">
+            <img src={logo} alt="" className="h-7 w-7 shrink-0 sm:h-8 sm:w-8" />
+            <span className="truncate text-sm font-semibold sm:text-base">Smart Reel</span>
           </Link>
           <button
             onClick={() => setShowSaved(true)}
-            className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/70 hover:text-white"
+            className="flex shrink-0 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-white/70 hover:text-white sm:px-3 sm:text-xs"
           >
             <FolderOpen className="h-3.5 w-3.5" />
-            Projects
+            <span className="hidden sm:inline">Projects</span>
           </button>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-5 py-8 grid gap-8 lg:grid-cols-[1fr_1.1fr]">
-        <section className="space-y-5">
+      <main className="mx-auto w-full max-w-6xl px-3 py-6 sm:px-5 sm:py-8 grid gap-6 sm:gap-8 lg:grid-cols-[1fr_1.1fr]">
+        <section className="min-w-0 space-y-5">
           <div>
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">AI Editor</h1>
             <p className="mt-1 text-sm text-white/60">Upload clips, add a reference, get a cinematic plan, preview & export.</p>
@@ -1349,7 +1349,7 @@ function Editor() {
         </section>
 
         {/* right column: plan / render / preview */}
-        <section className="lg:sticky lg:top-24 lg:self-start space-y-4">
+        <section className="min-w-0 lg:sticky lg:top-24 lg:self-start space-y-4">
           {stage === "setup" && (
             <EmptyHint />
           )}
@@ -2436,56 +2436,61 @@ function PreviewScreen({
         </div>
       </div>
 
-      {/* AI tweak */}
+      {/* Satisfaction loop */}
       <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-white/[0.01] p-5">
-        <Label icon={Wand2} title="What would you like to change?" />
-        <div className="mt-3 flex gap-2">
-          <input
-            value={tweak}
-            onChange={(e) => setTweak(e.target.value)}
-            placeholder="e.g. add slow-mo intro, more glow…"
-            className="flex-1 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm placeholder:text-white/30 focus:border-fuchsia-400/50 focus:outline-none"
-          />
-          <button
-            onClick={() => onTweak(tweak)}
-            disabled={!tweak.trim()}
-            className="rounded-lg bg-gradient-to-r from-fuchsia-500 to-blue-500 px-4 text-sm font-medium disabled:opacity-50"
-          >
-            Apply
-          </button>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <Label icon={Wand2} title="Are you satisfied?" />
+        <p className="mt-1 text-xs text-white/50">Tap a tweak to regenerate, or hit Done to lock this cut and download.</p>
+        <div className="mt-3 flex flex-wrap gap-1.5">
           {AI_TWEAKS.map((s) => (
             <button
               key={s}
               onClick={() => onTweak(s)}
-              className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/60 hover:border-fuchsia-400/40 hover:text-white"
+              disabled={exportBusy}
+              className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/70 hover:border-fuchsia-400/40 hover:text-white disabled:opacity-50"
             >
               {s}
             </button>
           ))}
         </div>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+          <input
+            value={tweak}
+            onChange={(e) => setTweak(e.target.value)}
+            placeholder="Custom request: e.g. add slow-mo intro, more glow…"
+            className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm placeholder:text-white/30 focus:border-fuchsia-400/50 focus:outline-none"
+          />
+          <button
+            onClick={() => onTweak(tweak)}
+            disabled={!tweak.trim() || exportBusy}
+            className="shrink-0 rounded-lg bg-gradient-to-r from-fuchsia-500 to-blue-500 px-4 py-2 text-sm font-medium disabled:opacity-50"
+          >
+            Apply
+          </button>
+        </div>
       </div>
 
-      {/* actions */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <ActionBtn icon={Download} label={exportBusy ? "Rendering…" : "Download MP4"} onClick={downloadPlayablePreview} primary disabled={exportBusy || !previewValidation.canExport} />
-        <ActionBtn icon={Download} label="Export" onClick={downloadPlayablePreview} primary disabled={exportBusy || !previewValidation.canExport} />
+      {/* actions — mobile-safe grid */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <ActionBtn icon={Download} label={exportBusy ? "Rendering…" : "Done · Download"} onClick={downloadPlayablePreview} primary disabled={exportBusy || !previewValidation.canExport} />
+        <ActionBtn icon={Share2} label="Export" onClick={onExport} disabled={exportBusy || !previewValidation.canExport} />
         <ActionBtn icon={Save} label="Save" onClick={onSave} />
         <ActionBtn icon={RefreshCw} label="Edit again" onClick={onEditAgain} />
-        <ActionBtn icon={Download} label="Plan JSON" onClick={onDownloadPlan} />
       </div>
-      {exportStatus && <p className="rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/10 px-3 py-2 text-xs text-fuchsia-100">{exportStatus}</p>}
+      {exportStatus && <p className="rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/10 px-3 py-2 text-xs text-fuchsia-100 break-words">{exportStatus}</p>}
 
       <details className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-sm text-white/70">
-        <summary className="cursor-pointer text-white/80">Download source clips</summary>
+        <summary className="cursor-pointer text-white/80">Download source clips & plan</summary>
         <div className="mt-2 space-y-1.5">
           {clips.map((c) => (
-            <button key={c.id} onClick={() => onDownloadClip(c)} className="flex w-full items-center justify-between rounded-md border border-white/5 bg-white/[0.03] px-3 py-2 text-left hover:border-fuchsia-400/40">
-              <span className="truncate">{c.name}</span>
-              <Download className="h-3.5 w-3.5 text-white/50" />
+            <button key={c.id} onClick={() => onDownloadClip(c)} className="flex w-full items-center justify-between gap-2 rounded-md border border-white/5 bg-white/[0.03] px-3 py-2 text-left hover:border-fuchsia-400/40">
+              <span className="min-w-0 truncate">{c.name}</span>
+              <Download className="h-3.5 w-3.5 shrink-0 text-white/50" />
             </button>
           ))}
+          <button onClick={onDownloadPlan} className="flex w-full items-center justify-between gap-2 rounded-md border border-white/5 bg-white/[0.03] px-3 py-2 text-left hover:border-fuchsia-400/40">
+            <span className="min-w-0 truncate">Edit plan JSON</span>
+            <Download className="h-3.5 w-3.5 shrink-0 text-white/50" />
+          </button>
         </div>
       </details>
 
