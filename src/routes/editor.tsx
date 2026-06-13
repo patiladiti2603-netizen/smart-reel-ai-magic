@@ -2560,7 +2560,7 @@ function PreviewScreen({
       {/* actions — mobile-safe grid */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <ActionBtn icon={Download} label={exportBusy ? "Rendering…" : "Done · Download"} onClick={downloadPlayablePreview} primary disabled={exportBusy || !previewValidation.canExport} />
-        <ActionBtn icon={Share2} label="Export" onClick={onExport} disabled={exportBusy || !previewValidation.canExport} />
+        <ActionBtn icon={Share2} label="Export MP4" onClick={downloadPlayablePreview} disabled={exportBusy || !previewValidation.canExport} />
         <ActionBtn icon={Save} label="Save" onClick={onSave} />
         <ActionBtn icon={RefreshCw} label="Edit again" onClick={onEditAgain} />
       </div>
@@ -2583,7 +2583,7 @@ function PreviewScreen({
       </details>
 
       <p className="px-1 text-[11px] leading-relaxed text-white/40">
-        Note: Smart Reel generates the full cinematic edit plan and previews it in your browser using your source clips. Final encoding to a single MP4 happens in a desktop NLE (Premiere, CapCut, DaVinci) by following the plan, or use the plan JSON with any AI render pipeline.
+        Smart Reel validates the generated MP4 before preview/export. If the player reports a decode error, it rebuilds automatically and shows the exact reason.
       </p>
     </div>
   );
