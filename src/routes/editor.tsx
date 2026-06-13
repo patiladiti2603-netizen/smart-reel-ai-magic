@@ -2402,14 +2402,27 @@ function PreviewScreen({
               preload="auto"
               onLoadedMetadata={(event) => {
                 const video = event.currentTarget;
+                smartReelLog("preview source", {
+                  src: video.currentSrc || video.src,
+                  duration: video.duration,
+                  width: video.videoWidth,
+                  height: video.videoHeight,
+                });
                 setMediaReady(true);
                 setElapsed(video.currentTime || 0);
+                if (!Number.isFinite(video.duration) || video.duration <= 0 || video.videoWidth <= 0 || video.videoHeight <= 0) {
+                  setPreviewIssue(`Preview validation failed: invalid player metadata (${video.videoWidth || 0}x${video.videoHeight || 0}, ${Number.isFinite(video.duration) ? video.duration : "unknown"}s). Rebuilding video automatically.`);
+                  void rebuildPreview("Preview failed. Rebuilding video automatically.");
+                }
               }}
               onTimeUpdate={(event) => setElapsed(event.currentTarget.currentTime || 0)}
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
-              onError={() => {
-                setPreviewIssue("Preview failed. Rebuilding video automatically.");
+              onError={(event) => {
+                const video = event.currentTarget;
+                const detail = getVideoElementError(video);
+                smartReelLog("preview source", { src: video.currentSrc || video.src, error: detail });
+                setPreviewIssue(`Preview failed: ${detail}. Rebuilding video automatically.`);
                 setRenderedReel((previous) => {
                   if (previous?.url) URL.revokeObjectURL(previous.url);
                   return null;
