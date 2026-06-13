@@ -443,6 +443,7 @@ const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: 
   } else {
     await runSyntheticAudioMux();
   }
+  ffmpegLogs.length = 0;
   await ffmpeg.exec(["-i", outputName]).catch(() => undefined);
   const details = ffmpegLogs.slice(-80);
   const joinedLogs = details.join("\n");
