@@ -1349,7 +1349,7 @@ function Editor() {
         </section>
 
         {/* right column: plan / render / preview */}
-        <section className="lg:sticky lg:top-24 lg:self-start space-y-4">
+        <section className="min-w-0 lg:sticky lg:top-24 lg:self-start space-y-4">
           {stage === "setup" && (
             <EmptyHint />
           )}
