@@ -454,6 +454,9 @@ const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: 
   };
   smartReelLog("audio output", { song: song?.name || "AI audible beat bed", checks });
   if (!checks.videoStream || !checks.audioStream) {
+    await ffmpeg.deleteFile("render.webm").catch(() => undefined);
+    await ffmpeg.deleteFile(outputName).catch(() => undefined);
+    ffmpeg.terminate();
     throw new Error(`FFmpeg output validation failed: video stream=${checks.videoStream ? "yes" : "no"}, audio stream=${checks.audioStream ? "yes" : "no"}.`);
   }
   const data = await ffmpeg.readFile(outputName);
@@ -494,7 +497,7 @@ const emptyPreviewValidation = (message: string): PreviewValidation => ({
   message,
 });
 
-const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean): Promise<PreviewValidation> => {
+const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean, muxChecks?: FfmpegMuxChecks): Promise<PreviewValidation> => {
   if (typeof window === "undefined") return emptyPreviewValidation("Preview is not available until the app is loaded.");
   const fileExists = blob instanceof Blob;
   const fileSizeOk = blob.size > 2048;
@@ -536,14 +539,14 @@ const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean): Promis
   });
   const durationOk = loaded && Number.isFinite(video.duration) && video.duration > 0.25;
   const videoTrack = loaded && video.videoWidth > 0 && video.videoHeight > 0;
-  const audioTrack = expectedAudio;
+  const audioTrack = expectedAudio ? Boolean(muxChecks?.audioStream) : true;
   URL.revokeObjectURL(url);
   const playable = Boolean(mp4Valid && videoTrack && durationOk);
   const issues = [
     !mp4Valid ? "MP4 file signature/type check failed" : "",
     !videoTrack ? `Video track missing or dimensions are zero (${video.videoWidth || 0}x${video.videoHeight || 0})` : "",
     !durationOk ? `Duration missing or invalid (${Number.isFinite(video.duration) ? video.duration : "unknown"}s)` : "",
-    expectedAudio && !audioTrack ? "Audio stream missing" : "",
+    expectedAudio && !audioTrack ? "Audio stream missing from FFmpeg output" : "",
     errorMessage ? `Player load error: ${errorMessage}` : "",
   ].filter(Boolean);
   smartReelLog("render output", { validation: { mp4Valid, videoTrack, audioTrack, durationOk, playable }, issues });
