@@ -76,6 +76,8 @@ type PreviewValidation = {
   message: string;
 };
 type RenderedReel = { blob: Blob; url: string; validation: PreviewValidation; fileName: string };
+type FfmpegMuxChecks = { videoStream: boolean; audioStream: boolean; details: string[] };
+type FfmpegMuxResult = { blob: Blob; checks: FfmpegMuxChecks };
 
 type EditPlan = {
   project: { title: string; category: string; aspect_ratio: string; target_duration_sec: number; language: string };
@@ -229,6 +231,21 @@ const colorGradeFilter = (grade: string): string => {
 };
 
 const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+const smartReelLog = (label: string, data: unknown) => {
+  if (typeof console !== "undefined") console.info(`[Smart Reel] ${label}`, data);
+};
+
+const getVideoElementError = (video: HTMLVideoElement) => {
+  const code = video.error?.code;
+  const map: Record<number, string> = {
+    1: "MEDIA_ERR_ABORTED",
+    2: "MEDIA_ERR_NETWORK",
+    3: "MEDIA_ERR_DECODE",
+    4: "MEDIA_ERR_SRC_NOT_SUPPORTED",
+  };
+  return code ? `${map[code] || "MEDIA_ERR_UNKNOWN"}${video.error?.message ? `: ${video.error.message}` : ""}` : "Unknown media load error";
+};
 
 const waitForEvent = (target: EventTarget, events: string[], timeout = 1600) =>
   new Promise<void>((resolve) => {
