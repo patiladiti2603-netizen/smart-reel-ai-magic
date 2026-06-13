@@ -979,34 +979,34 @@ function Editor() {
   };
 
   return (
-    <div className="min-h-screen bg-[#07050f] text-white">
-      <div className="pointer-events-none fixed inset-0 -z-10">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-[#07050f] text-white">
+      <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
         <div className="absolute -top-40 -left-40 h-[460px] w-[460px] rounded-full bg-fuchsia-600/20 blur-[120px]" />
         <div className="absolute bottom-0 -right-40 h-[460px] w-[460px] rounded-full bg-blue-600/20 blur-[120px]" />
       </div>
 
       <header className="sticky top-0 z-20 border-b border-white/5 bg-[#07050f]/70 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
-          <Link to="/" className="flex items-center gap-2 text-sm text-white/70 hover:text-white">
-            <ArrowLeft className="h-4 w-4" />
-            Back
+        <div className="mx-auto grid w-full max-w-6xl grid-cols-[auto_1fr_auto] items-center gap-2 px-3 py-3 sm:px-5 sm:py-4">
+          <Link to="/" className="flex min-w-0 items-center gap-1.5 text-xs text-white/70 hover:text-white sm:text-sm">
+            <ArrowLeft className="h-4 w-4 shrink-0" />
+            <span className="hidden sm:inline">Back</span>
           </Link>
-          <Link to="/" className="flex items-center gap-2">
-            <img src={logo} alt="" className="h-8 w-8" />
-            <span className="text-base font-semibold">Smart Reel</span>
+          <Link to="/" className="flex min-w-0 items-center justify-center gap-2">
+            <img src={logo} alt="" className="h-7 w-7 shrink-0 sm:h-8 sm:w-8" />
+            <span className="truncate text-sm font-semibold sm:text-base">Smart Reel</span>
           </Link>
           <button
             onClick={() => setShowSaved(true)}
-            className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-white/70 hover:text-white"
+            className="flex shrink-0 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-white/70 hover:text-white sm:px-3 sm:text-xs"
           >
             <FolderOpen className="h-3.5 w-3.5" />
-            Projects
+            <span className="hidden sm:inline">Projects</span>
           </button>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-5 py-8 grid gap-8 lg:grid-cols-[1fr_1.1fr]">
-        <section className="space-y-5">
+      <main className="mx-auto w-full max-w-6xl px-3 py-6 sm:px-5 sm:py-8 grid gap-6 sm:gap-8 lg:grid-cols-[1fr_1.1fr]">
+        <section className="min-w-0 space-y-5">
           <div>
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">AI Editor</h1>
             <p className="mt-1 text-sm text-white/60">Upload clips, add a reference, get a cinematic plan, preview & export.</p>
