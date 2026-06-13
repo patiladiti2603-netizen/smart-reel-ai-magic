@@ -1934,11 +1934,13 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
   if (blob.size < 2048) throw new Error("Export validation failed: no video frames were encoded.");
   onProgress("Muxing H.264 MP4 with video + audio…");
   const finalDuration = Math.max(1, renderedSec || plan.project.target_duration_sec || 12);
-  const mp4Blob = await transcodeRecordingToMp4(blob, song, finalDuration, plan.music.bpm_estimate || 110);
+  const { blob: mp4Blob, checks: muxChecks } = await transcodeRecordingToMp4(blob, song, finalDuration, plan.music.bpm_estimate || 110);
+  smartReelLog("render output", { webmSize: blob.size, mp4Size: mp4Blob.size, muxChecks, finalDuration });
   if (mp4Blob.size < 2048) throw new Error("Export validation failed: MP4 muxing produced an empty file.");
   const validation = await validateRenderedVideo(mp4Blob, true);
   if (!validation.playable) throw new Error(validation.message);
   const url = URL.createObjectURL(mp4Blob);
+  smartReelLog("media URL", { url, exists: Boolean(url), size: mp4Blob.size, type: mp4Blob.type, validation });
   return {
     blob: mp4Blob,
     url,
