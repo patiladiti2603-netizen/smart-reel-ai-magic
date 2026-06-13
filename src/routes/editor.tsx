@@ -76,6 +76,8 @@ type PreviewValidation = {
   message: string;
 };
 type RenderedReel = { blob: Blob; url: string; validation: PreviewValidation; fileName: string };
+type FfmpegMuxChecks = { videoStream: boolean; audioStream: boolean; details: string[] };
+type FfmpegMuxResult = { blob: Blob; checks: FfmpegMuxChecks };
 
 type EditPlan = {
   project: { title: string; category: string; aspect_ratio: string; target_duration_sec: number; language: string };
@@ -230,6 +232,21 @@ const colorGradeFilter = (grade: string): string => {
 
 const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
+const smartReelLog = (label: string, data: unknown) => {
+  if (typeof console !== "undefined") console.info(`[Smart Reel] ${label}`, data);
+};
+
+const getVideoElementError = (video: HTMLVideoElement) => {
+  const code = video.error?.code;
+  const map: Record<number, string> = {
+    1: "MEDIA_ERR_ABORTED",
+    2: "MEDIA_ERR_NETWORK",
+    3: "MEDIA_ERR_DECODE",
+    4: "MEDIA_ERR_SRC_NOT_SUPPORTED",
+  };
+  return code ? `${map[code] || "MEDIA_ERR_UNKNOWN"}${video.error?.message ? `: ${video.error.message}` : ""}` : "Unknown media load error";
+};
+
 const waitForEvent = (target: EventTarget, events: string[], timeout = 1600) =>
   new Promise<void>((resolve) => {
     let done = false;
@@ -356,62 +373,99 @@ const repairVideoWithFfmpeg = async (clip: LocalClip) => {
   return URL.createObjectURL(blob);
 };
 
-const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: number, bpm: number) => {
+const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: number, bpm: number): Promise<FfmpegMuxResult> => {
   const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
     import("@ffmpeg/ffmpeg"),
     import("@ffmpeg/util"),
   ]);
   const ffmpeg = new FFmpeg();
+  const ffmpegLogs: string[] = [];
+  ffmpeg.on("log", ({ message }) => {
+    ffmpegLogs.push(message);
+  });
   await ffmpeg.load({
     coreURL: await toBlobURL(ffmpegCoreUrl, "text/javascript"),
     wasmURL: await toBlobURL(ffmpegWasmUrl, "application/wasm"),
   });
   await ffmpeg.writeFile("render.webm", await fetchFile(blob));
-  if (song) {
-    const ext = song.name.split(".").pop()?.replace(/[^a-z0-9]/gi, "").toLowerCase() || "mp3";
-    const songName = `song.${ext}`;
-    await ffmpeg.writeFile(songName, await fetchFile(song.file));
-    await ffmpeg.exec([
-      "-i", "render.webm",
-      "-stream_loop", "-1",
-      "-i", songName,
-      "-map", "0:v:0",
-      "-map", "1:a:0",
-      "-shortest",
-      "-c:v", "libx264",
-      "-preset", "veryfast",
-      "-pix_fmt", "yuv420p",
-      "-c:a", "aac",
-      "-b:a", "192k",
-      "-movflags", "+faststart",
-      "smart-reel-final.mp4",
-    ]);
-    await ffmpeg.deleteFile(songName).catch(() => undefined);
-  } else {
+  const outputName = "smart-reel-final.mp4";
+  const runSyntheticAudioMux = async () => {
     const beatFrequency = Math.round(Math.max(80, Math.min(180, bpm || 110)));
     await ffmpeg.exec([
+      "-y",
+      "-fflags", "+genpts",
       "-i", "render.webm",
       "-f", "lavfi",
-      "-i", `sine=frequency=${beatFrequency}:duration=${Math.max(1, durationSec).toFixed(2)}`,
+      "-i", `sine=frequency=${beatFrequency}:duration=${Math.max(1, durationSec).toFixed(2)}:sample_rate=48000`,
       "-map", "0:v:0",
       "-map", "1:a:0",
       "-shortest",
+      "-r", "30",
+      "-vf", "format=yuv420p,scale=trunc(iw/2)*2:trunc(ih/2)*2",
       "-c:v", "libx264",
       "-preset", "veryfast",
       "-pix_fmt", "yuv420p",
       "-c:a", "aac",
       "-b:a", "160k",
       "-movflags", "+faststart",
-      "smart-reel-final.mp4",
+      outputName,
     ]);
+  };
+  if (song) {
+    const ext = song.name.split(".").pop()?.replace(/[^a-z0-9]/gi, "").toLowerCase() || "mp3";
+    const songName = `song.${ext}`;
+    await ffmpeg.writeFile(songName, await fetchFile(song.file));
+    try {
+      await ffmpeg.exec([
+        "-y",
+        "-fflags", "+genpts",
+        "-i", "render.webm",
+        "-stream_loop", "-1",
+        "-i", songName,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-shortest",
+        "-r", "30",
+        "-vf", "format=yuv420p,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-movflags", "+faststart",
+        outputName,
+      ]);
+    } catch (err) {
+      smartReelLog("audio output", { warning: "Uploaded song mux failed; rebuilding with safe audible audio bed", error: err instanceof Error ? err.message : String(err) });
+      await runSyntheticAudioMux();
+    }
+    await ffmpeg.deleteFile(songName).catch(() => undefined);
+  } else {
+    await runSyntheticAudioMux();
   }
-  const data = await ffmpeg.readFile("smart-reel-final.mp4");
+  ffmpegLogs.length = 0;
+  await ffmpeg.exec(["-i", outputName]).catch(() => undefined);
+  const details = ffmpegLogs.slice(-80);
+  const joinedLogs = details.join("\n");
+  const checks = {
+    videoStream: /Stream #\d+:\d+[^\n]*Video:/i.test(joinedLogs),
+    audioStream: /Stream #\d+:\d+[^\n]*Audio:/i.test(joinedLogs),
+    details,
+  };
+  smartReelLog("audio output", { song: song?.name || "AI audible beat bed", checks });
+  if (!checks.videoStream || !checks.audioStream) {
+    await ffmpeg.deleteFile("render.webm").catch(() => undefined);
+    await ffmpeg.deleteFile(outputName).catch(() => undefined);
+    ffmpeg.terminate();
+    throw new Error(`FFmpeg output validation failed: video stream=${checks.videoStream ? "yes" : "no"}, audio stream=${checks.audioStream ? "yes" : "no"}.`);
+  }
+  const data = await ffmpeg.readFile(outputName);
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(String(data));
   const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   await ffmpeg.deleteFile("render.webm").catch(() => undefined);
-  await ffmpeg.deleteFile("smart-reel-final.mp4").catch(() => undefined);
+  await ffmpeg.deleteFile(outputName).catch(() => undefined);
   ffmpeg.terminate();
-  return new Blob([arrayBuffer], { type: "video/mp4" });
+  return { blob: new Blob([arrayBuffer], { type: "video/mp4" }), checks };
 };
 
 const prepareVideoFrame = async (video: HTMLVideoElement, targetSec: number) => {
@@ -443,7 +497,7 @@ const emptyPreviewValidation = (message: string): PreviewValidation => ({
   message,
 });
 
-const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean): Promise<PreviewValidation> => {
+const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean, muxChecks?: FfmpegMuxChecks): Promise<PreviewValidation> => {
   if (typeof window === "undefined") return emptyPreviewValidation("Preview is not available until the app is loaded.");
   const fileExists = blob instanceof Blob;
   const fileSizeOk = blob.size > 2048;
@@ -451,11 +505,14 @@ const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean): Promis
   if (!fileExists || !fileSizeOk) return emptyPreviewValidation("Preview file is empty. Rebuilding video automatically.");
 
   const url = URL.createObjectURL(blob);
+  smartReelLog("media URL", { url, exists: Boolean(url), size: blob.size, type: blob.type });
   const video = window.document.createElement("video");
-  video.src = url;
   video.muted = true;
   video.playsInline = true;
   video.preload = "auto";
+  video.src = url;
+  smartReelLog("preview source", { src: video.src, hasSource: Boolean(video.currentSrc || video.src) });
+  let errorMessage = "";
   const loaded = await new Promise<boolean>((resolve) => {
     let done = false;
     const finish = (ok: boolean) => {
@@ -469,7 +526,10 @@ const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean): Promis
       resolve(ok);
     };
     const onLoaded = () => finish(true);
-    const onError = () => finish(false);
+    const onError = () => {
+      errorMessage = getVideoElementError(video);
+      finish(false);
+    };
     const timer = window.setTimeout(() => finish(false), 4500);
     video.addEventListener("loadedmetadata", onLoaded, { once: true });
     video.addEventListener("loadeddata", onLoaded, { once: true });
@@ -479,9 +539,17 @@ const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean): Promis
   });
   const durationOk = loaded && Number.isFinite(video.duration) && video.duration > 0.25;
   const videoTrack = loaded && video.videoWidth > 0 && video.videoHeight > 0;
-  const audioTrack = expectedAudio;
+  const audioTrack = expectedAudio ? Boolean(muxChecks?.audioStream) : true;
   URL.revokeObjectURL(url);
   const playable = Boolean(mp4Valid && videoTrack && durationOk);
+  const issues = [
+    !mp4Valid ? "MP4 file signature/type check failed" : "",
+    !videoTrack ? `Video track missing or dimensions are zero (${video.videoWidth || 0}x${video.videoHeight || 0})` : "",
+    !durationOk ? `Duration missing or invalid (${Number.isFinite(video.duration) ? video.duration : "unknown"}s)` : "",
+    expectedAudio && !audioTrack ? "Audio stream missing from FFmpeg output" : "",
+    errorMessage ? `Player load error: ${errorMessage}` : "",
+  ].filter(Boolean);
+  smartReelLog("render output", { validation: { mp4Valid, videoTrack, audioTrack, durationOk, playable }, issues });
   return {
     fileExists,
     fileSizeOk,
@@ -491,7 +559,7 @@ const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean): Promis
     durationOk,
     playable,
     canExport: playable && audioTrack,
-    message: playable && audioTrack ? "Preview validated: video, audio and duration are ready." : "Preview failed. Rebuilding video automatically.",
+    message: playable && audioTrack ? "Preview validated: video, audio and duration are ready." : `Preview validation failed: ${issues.join("; ") || "browser could not load generated video"}. Rebuilding video automatically.`,
   };
 };
 
@@ -1886,11 +1954,13 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
   if (blob.size < 2048) throw new Error("Export validation failed: no video frames were encoded.");
   onProgress("Muxing H.264 MP4 with video + audio…");
   const finalDuration = Math.max(1, renderedSec || plan.project.target_duration_sec || 12);
-  const mp4Blob = await transcodeRecordingToMp4(blob, song, finalDuration, plan.music.bpm_estimate || 110);
+  const { blob: mp4Blob, checks: muxChecks } = await transcodeRecordingToMp4(blob, song, finalDuration, plan.music.bpm_estimate || 110);
+  smartReelLog("render output", { webmSize: blob.size, mp4Size: mp4Blob.size, muxChecks, finalDuration });
   if (mp4Blob.size < 2048) throw new Error("Export validation failed: MP4 muxing produced an empty file.");
-  const validation = await validateRenderedVideo(mp4Blob, true);
+  const validation = await validateRenderedVideo(mp4Blob, true, muxChecks);
   if (!validation.playable) throw new Error(validation.message);
   const url = URL.createObjectURL(mp4Blob);
+  smartReelLog("media URL", { url, exists: Boolean(url), size: mp4Blob.size, type: mp4Blob.type, validation });
   return {
     blob: mp4Blob,
     url,
@@ -1943,18 +2013,22 @@ function PreviewScreen({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const imageTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const renderBusyRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const synthCleanupRef = useRef<(() => void) | null>(null);
   const beatTimerRef = useRef<number | null>(null);
 
   const rebuildPreview = useCallback(async (reason = "Building validated preview video…") => {
-    if (exportBusy) return;
+    if (renderBusyRef.current) return;
+    renderBusyRef.current = true;
     setExportBusy(true);
     setPreviewIssue(null);
     setExportStatus(reason);
     setPreviewValidation(emptyPreviewValidation(reason));
     try {
       const next = await renderPreviewReel(plan, clips, song, captionsEnabled, setExportStatus);
+      if (!next.url || next.blob.size <= 2048) throw new Error("Preview validation failed: generated media URL or file is empty. Rebuilding video automatically.");
+      smartReelLog("preview source", { url: next.url, size: next.blob.size, type: next.blob.type, validation: next.validation });
       setRenderedReel((previous) => {
         if (previous?.url) URL.revokeObjectURL(previous.url);
         return next;
@@ -1969,9 +2043,10 @@ function PreviewScreen({
         window.setTimeout(() => void rebuildPreview("Preview failed. Rebuilding video automatically."), 700);
       }
     } finally {
+      renderBusyRef.current = false;
       setExportBusy(false);
     }
-  }, [plan, clips, song, captionsEnabled, exportBusy, renderAttempt]);
+  }, [plan, clips, song, captionsEnabled, renderAttempt]);
 
   useEffect(() => {
     setRenderAttempt(0);
@@ -2333,14 +2408,27 @@ function PreviewScreen({
               preload="auto"
               onLoadedMetadata={(event) => {
                 const video = event.currentTarget;
+                smartReelLog("preview source", {
+                  src: video.currentSrc || video.src,
+                  duration: video.duration,
+                  width: video.videoWidth,
+                  height: video.videoHeight,
+                });
                 setMediaReady(true);
                 setElapsed(video.currentTime || 0);
+                if (!Number.isFinite(video.duration) || video.duration <= 0 || video.videoWidth <= 0 || video.videoHeight <= 0) {
+                  setPreviewIssue(`Preview validation failed: invalid player metadata (${video.videoWidth || 0}x${video.videoHeight || 0}, ${Number.isFinite(video.duration) ? video.duration : "unknown"}s). Rebuilding video automatically.`);
+                  void rebuildPreview("Preview failed. Rebuilding video automatically.");
+                }
               }}
               onTimeUpdate={(event) => setElapsed(event.currentTarget.currentTime || 0)}
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
-              onError={() => {
-                setPreviewIssue("Preview failed. Rebuilding video automatically.");
+              onError={(event) => {
+                const video = event.currentTarget;
+                const detail = getVideoElementError(video);
+                smartReelLog("preview source", { src: video.currentSrc || video.src, error: detail });
+                setPreviewIssue(`Preview failed: ${detail}. Rebuilding video automatically.`);
                 setRenderedReel((previous) => {
                   if (previous?.url) URL.revokeObjectURL(previous.url);
                   return null;
@@ -2472,7 +2560,7 @@ function PreviewScreen({
       {/* actions — mobile-safe grid */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <ActionBtn icon={Download} label={exportBusy ? "Rendering…" : "Done · Download"} onClick={downloadPlayablePreview} primary disabled={exportBusy || !previewValidation.canExport} />
-        <ActionBtn icon={Share2} label="Export" onClick={onExport} disabled={exportBusy || !previewValidation.canExport} />
+        <ActionBtn icon={Share2} label="Export MP4" onClick={downloadPlayablePreview} disabled={exportBusy || !previewValidation.canExport} />
         <ActionBtn icon={Save} label="Save" onClick={onSave} />
         <ActionBtn icon={RefreshCw} label="Edit again" onClick={onEditAgain} />
       </div>
@@ -2495,7 +2583,7 @@ function PreviewScreen({
       </details>
 
       <p className="px-1 text-[11px] leading-relaxed text-white/40">
-        Note: Smart Reel generates the full cinematic edit plan and previews it in your browser using your source clips. Final encoding to a single MP4 happens in a desktop NLE (Premiere, CapCut, DaVinci) by following the plan, or use the plan JSON with any AI render pipeline.
+        Smart Reel validates the generated MP4 before preview/export. If the player reports a decode error, it rebuilds automatically and shows the exact reason.
       </p>
     </div>
   );
