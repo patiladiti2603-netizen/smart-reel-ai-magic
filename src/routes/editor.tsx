@@ -373,62 +373,93 @@ const repairVideoWithFfmpeg = async (clip: LocalClip) => {
   return URL.createObjectURL(blob);
 };
 
-const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: number, bpm: number) => {
+const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: number, bpm: number): Promise<FfmpegMuxResult> => {
   const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
     import("@ffmpeg/ffmpeg"),
     import("@ffmpeg/util"),
   ]);
   const ffmpeg = new FFmpeg();
+  const ffmpegLogs: string[] = [];
+  ffmpeg.on("log", ({ message }: { message: string }) => {
+    ffmpegLogs.push(message);
+  });
   await ffmpeg.load({
     coreURL: await toBlobURL(ffmpegCoreUrl, "text/javascript"),
     wasmURL: await toBlobURL(ffmpegWasmUrl, "application/wasm"),
   });
   await ffmpeg.writeFile("render.webm", await fetchFile(blob));
-  if (song) {
-    const ext = song.name.split(".").pop()?.replace(/[^a-z0-9]/gi, "").toLowerCase() || "mp3";
-    const songName = `song.${ext}`;
-    await ffmpeg.writeFile(songName, await fetchFile(song.file));
-    await ffmpeg.exec([
-      "-i", "render.webm",
-      "-stream_loop", "-1",
-      "-i", songName,
-      "-map", "0:v:0",
-      "-map", "1:a:0",
-      "-shortest",
-      "-c:v", "libx264",
-      "-preset", "veryfast",
-      "-pix_fmt", "yuv420p",
-      "-c:a", "aac",
-      "-b:a", "192k",
-      "-movflags", "+faststart",
-      "smart-reel-final.mp4",
-    ]);
-    await ffmpeg.deleteFile(songName).catch(() => undefined);
-  } else {
+  const outputName = "smart-reel-final.mp4";
+  const runSyntheticAudioMux = async () => {
     const beatFrequency = Math.round(Math.max(80, Math.min(180, bpm || 110)));
     await ffmpeg.exec([
+      "-fflags", "+genpts",
       "-i", "render.webm",
       "-f", "lavfi",
-      "-i", `sine=frequency=${beatFrequency}:duration=${Math.max(1, durationSec).toFixed(2)}`,
+      "-i", `sine=frequency=${beatFrequency}:duration=${Math.max(1, durationSec).toFixed(2)}:sample_rate=48000`,
       "-map", "0:v:0",
       "-map", "1:a:0",
       "-shortest",
+      "-r", "30",
+      "-vf", "format=yuv420p,scale=trunc(iw/2)*2:trunc(ih/2)*2",
       "-c:v", "libx264",
       "-preset", "veryfast",
       "-pix_fmt", "yuv420p",
       "-c:a", "aac",
       "-b:a", "160k",
       "-movflags", "+faststart",
-      "smart-reel-final.mp4",
+      outputName,
     ]);
+  };
+  if (song) {
+    const ext = song.name.split(".").pop()?.replace(/[^a-z0-9]/gi, "").toLowerCase() || "mp3";
+    const songName = `song.${ext}`;
+    await ffmpeg.writeFile(songName, await fetchFile(song.file));
+    try {
+      await ffmpeg.exec([
+        "-fflags", "+genpts",
+        "-i", "render.webm",
+        "-stream_loop", "-1",
+        "-i", songName,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-shortest",
+        "-r", "30",
+        "-vf", "format=yuv420p,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-movflags", "+faststart",
+        outputName,
+      ]);
+    } catch (err) {
+      smartReelLog("audio output", { warning: "Uploaded song mux failed; rebuilding with safe audible audio bed", error: err instanceof Error ? err.message : String(err) });
+      await runSyntheticAudioMux();
+    }
+    await ffmpeg.deleteFile(songName).catch(() => undefined);
+  } else {
+    await runSyntheticAudioMux();
   }
-  const data = await ffmpeg.readFile("smart-reel-final.mp4");
+  await ffmpeg.exec(["-i", outputName]).catch(() => undefined);
+  const details = ffmpegLogs.slice(-80);
+  const joinedLogs = details.join("\n");
+  const checks = {
+    videoStream: /Stream #\d+:\d+[^\n]*Video:/i.test(joinedLogs),
+    audioStream: /Stream #\d+:\d+[^\n]*Audio:/i.test(joinedLogs),
+    details,
+  };
+  smartReelLog("audio output", { song: song?.name || "AI audible beat bed", checks });
+  if (!checks.videoStream || !checks.audioStream) {
+    throw new Error(`FFmpeg output validation failed: video stream=${checks.videoStream ? "yes" : "no"}, audio stream=${checks.audioStream ? "yes" : "no"}.`);
+  }
+  const data = await ffmpeg.readFile(outputName);
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(String(data));
   const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   await ffmpeg.deleteFile("render.webm").catch(() => undefined);
-  await ffmpeg.deleteFile("smart-reel-final.mp4").catch(() => undefined);
+  await ffmpeg.deleteFile(outputName).catch(() => undefined);
   ffmpeg.terminate();
-  return new Blob([arrayBuffer], { type: "video/mp4" });
+  return { blob: new Blob([arrayBuffer], { type: "video/mp4" }), checks };
 };
 
 const prepareVideoFrame = async (video: HTMLVideoElement, targetSec: number) => {
