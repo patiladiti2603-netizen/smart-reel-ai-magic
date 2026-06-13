@@ -2007,18 +2007,22 @@ function PreviewScreen({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const imageTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const renderBusyRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const synthCleanupRef = useRef<(() => void) | null>(null);
   const beatTimerRef = useRef<number | null>(null);
 
   const rebuildPreview = useCallback(async (reason = "Building validated preview video…") => {
-    if (exportBusy) return;
+    if (renderBusyRef.current) return;
+    renderBusyRef.current = true;
     setExportBusy(true);
     setPreviewIssue(null);
     setExportStatus(reason);
     setPreviewValidation(emptyPreviewValidation(reason));
     try {
       const next = await renderPreviewReel(plan, clips, song, captionsEnabled, setExportStatus);
+      if (!next.url || next.blob.size <= 2048) throw new Error("Preview validation failed: generated media URL or file is empty. Rebuilding video automatically.");
+      smartReelLog("preview source", { url: next.url, size: next.blob.size, type: next.blob.type, validation: next.validation });
       setRenderedReel((previous) => {
         if (previous?.url) URL.revokeObjectURL(previous.url);
         return next;
@@ -2033,9 +2037,10 @@ function PreviewScreen({
         window.setTimeout(() => void rebuildPreview("Preview failed. Rebuilding video automatically."), 700);
       }
     } finally {
+      renderBusyRef.current = false;
       setExportBusy(false);
     }
-  }, [plan, clips, song, captionsEnabled, exportBusy, renderAttempt]);
+  }, [plan, clips, song, captionsEnabled, renderAttempt]);
 
   useEffect(() => {
     setRenderAttempt(0);
