@@ -2436,46 +2436,47 @@ function PreviewScreen({
         </div>
       </div>
 
-      {/* AI tweak */}
+      {/* Satisfaction loop */}
       <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-white/[0.01] p-5">
-        <Label icon={Wand2} title="What would you like to change?" />
-        <div className="mt-3 flex gap-2">
-          <input
-            value={tweak}
-            onChange={(e) => setTweak(e.target.value)}
-            placeholder="e.g. add slow-mo intro, more glow…"
-            className="flex-1 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm placeholder:text-white/30 focus:border-fuchsia-400/50 focus:outline-none"
-          />
-          <button
-            onClick={() => onTweak(tweak)}
-            disabled={!tweak.trim()}
-            className="rounded-lg bg-gradient-to-r from-fuchsia-500 to-blue-500 px-4 text-sm font-medium disabled:opacity-50"
-          >
-            Apply
-          </button>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <Label icon={Wand2} title="Are you satisfied?" />
+        <p className="mt-1 text-xs text-white/50">Tap a tweak to regenerate, or hit Done to lock this cut and download.</p>
+        <div className="mt-3 flex flex-wrap gap-1.5">
           {AI_TWEAKS.map((s) => (
             <button
               key={s}
               onClick={() => onTweak(s)}
-              className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/60 hover:border-fuchsia-400/40 hover:text-white"
+              disabled={exportBusy}
+              className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[11px] text-white/70 hover:border-fuchsia-400/40 hover:text-white disabled:opacity-50"
             >
               {s}
             </button>
           ))}
         </div>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+          <input
+            value={tweak}
+            onChange={(e) => setTweak(e.target.value)}
+            placeholder="Custom request: e.g. add slow-mo intro, more glow…"
+            className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm placeholder:text-white/30 focus:border-fuchsia-400/50 focus:outline-none"
+          />
+          <button
+            onClick={() => onTweak(tweak)}
+            disabled={!tweak.trim() || exportBusy}
+            className="shrink-0 rounded-lg bg-gradient-to-r from-fuchsia-500 to-blue-500 px-4 py-2 text-sm font-medium disabled:opacity-50"
+          >
+            Apply
+          </button>
+        </div>
       </div>
 
-      {/* actions */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <ActionBtn icon={Download} label={exportBusy ? "Rendering…" : "Download MP4"} onClick={downloadPlayablePreview} primary disabled={exportBusy || !previewValidation.canExport} />
-        <ActionBtn icon={Download} label="Export" onClick={downloadPlayablePreview} primary disabled={exportBusy || !previewValidation.canExport} />
+      {/* actions — mobile-safe grid */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <ActionBtn icon={Download} label={exportBusy ? "Rendering…" : "Done · Download"} onClick={downloadPlayablePreview} primary disabled={exportBusy || !previewValidation.canExport} />
+        <ActionBtn icon={Share2} label="Export" onClick={onExport} disabled={exportBusy || !previewValidation.canExport} />
         <ActionBtn icon={Save} label="Save" onClick={onSave} />
         <ActionBtn icon={RefreshCw} label="Edit again" onClick={onEditAgain} />
-        <ActionBtn icon={Download} label="Plan JSON" onClick={onDownloadPlan} />
       </div>
-      {exportStatus && <p className="rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/10 px-3 py-2 text-xs text-fuchsia-100">{exportStatus}</p>}
+      {exportStatus && <p className="rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/10 px-3 py-2 text-xs text-fuchsia-100 break-words">{exportStatus}</p>}
 
       <details className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-sm text-white/70">
         <summary className="cursor-pointer text-white/80">Download source clips</summary>
