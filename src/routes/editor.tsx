@@ -2479,14 +2479,18 @@ function PreviewScreen({
       {exportStatus && <p className="rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/10 px-3 py-2 text-xs text-fuchsia-100 break-words">{exportStatus}</p>}
 
       <details className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-sm text-white/70">
-        <summary className="cursor-pointer text-white/80">Download source clips</summary>
+        <summary className="cursor-pointer text-white/80">Download source clips & plan</summary>
         <div className="mt-2 space-y-1.5">
           {clips.map((c) => (
-            <button key={c.id} onClick={() => onDownloadClip(c)} className="flex w-full items-center justify-between rounded-md border border-white/5 bg-white/[0.03] px-3 py-2 text-left hover:border-fuchsia-400/40">
-              <span className="truncate">{c.name}</span>
-              <Download className="h-3.5 w-3.5 text-white/50" />
+            <button key={c.id} onClick={() => onDownloadClip(c)} className="flex w-full items-center justify-between gap-2 rounded-md border border-white/5 bg-white/[0.03] px-3 py-2 text-left hover:border-fuchsia-400/40">
+              <span className="min-w-0 truncate">{c.name}</span>
+              <Download className="h-3.5 w-3.5 shrink-0 text-white/50" />
             </button>
           ))}
+          <button onClick={onDownloadPlan} className="flex w-full items-center justify-between gap-2 rounded-md border border-white/5 bg-white/[0.03] px-3 py-2 text-left hover:border-fuchsia-400/40">
+            <span className="min-w-0 truncate">Edit plan JSON</span>
+            <Download className="h-3.5 w-3.5 shrink-0 text-white/50" />
+          </button>
         </div>
       </details>
 
