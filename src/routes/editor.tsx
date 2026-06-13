@@ -380,7 +380,7 @@ const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: 
   ]);
   const ffmpeg = new FFmpeg();
   const ffmpegLogs: string[] = [];
-  ffmpeg.on("log", ({ message }: { message: string }) => {
+  ffmpeg.on("log", ({ message }) => {
     ffmpegLogs.push(message);
   });
   await ffmpeg.load({
@@ -392,6 +392,7 @@ const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: 
   const runSyntheticAudioMux = async () => {
     const beatFrequency = Math.round(Math.max(80, Math.min(180, bpm || 110)));
     await ffmpeg.exec([
+      "-y",
       "-fflags", "+genpts",
       "-i", "render.webm",
       "-f", "lavfi",
@@ -416,6 +417,7 @@ const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: 
     await ffmpeg.writeFile(songName, await fetchFile(song.file));
     try {
       await ffmpeg.exec([
+        "-y",
         "-fflags", "+genpts",
         "-i", "render.webm",
         "-stream_loop", "-1",
