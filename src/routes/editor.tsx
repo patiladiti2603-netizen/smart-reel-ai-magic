@@ -499,11 +499,14 @@ const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean): Promis
   if (!fileExists || !fileSizeOk) return emptyPreviewValidation("Preview file is empty. Rebuilding video automatically.");
 
   const url = URL.createObjectURL(blob);
+  smartReelLog("media URL", { url, exists: Boolean(url), size: blob.size, type: blob.type });
   const video = window.document.createElement("video");
-  video.src = url;
   video.muted = true;
   video.playsInline = true;
   video.preload = "auto";
+  video.src = url;
+  smartReelLog("preview source", { src: video.src, hasSource: Boolean(video.currentSrc || video.src) });
+  let errorMessage = "";
   const loaded = await new Promise<boolean>((resolve) => {
     let done = false;
     const finish = (ok: boolean) => {
@@ -517,7 +520,10 @@ const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean): Promis
       resolve(ok);
     };
     const onLoaded = () => finish(true);
-    const onError = () => finish(false);
+    const onError = () => {
+      errorMessage = getVideoElementError(video);
+      finish(false);
+    };
     const timer = window.setTimeout(() => finish(false), 4500);
     video.addEventListener("loadedmetadata", onLoaded, { once: true });
     video.addEventListener("loadeddata", onLoaded, { once: true });
@@ -530,6 +536,14 @@ const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean): Promis
   const audioTrack = expectedAudio;
   URL.revokeObjectURL(url);
   const playable = Boolean(mp4Valid && videoTrack && durationOk);
+  const issues = [
+    !mp4Valid ? "MP4 file signature/type check failed" : "",
+    !videoTrack ? `Video track missing or dimensions are zero (${video.videoWidth || 0}x${video.videoHeight || 0})` : "",
+    !durationOk ? `Duration missing or invalid (${Number.isFinite(video.duration) ? video.duration : "unknown"}s)` : "",
+    expectedAudio && !audioTrack ? "Audio stream missing" : "",
+    errorMessage ? `Player load error: ${errorMessage}` : "",
+  ].filter(Boolean);
+  smartReelLog("render output", { validation: { mp4Valid, videoTrack, audioTrack, durationOk, playable }, issues });
   return {
     fileExists,
     fileSizeOk,
@@ -539,7 +553,7 @@ const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean): Promis
     durationOk,
     playable,
     canExport: playable && audioTrack,
-    message: playable && audioTrack ? "Preview validated: video, audio and duration are ready." : "Preview failed. Rebuilding video automatically.",
+    message: playable && audioTrack ? "Preview validated: video, audio and duration are ready." : `Preview validation failed: ${issues.join("; ") || "browser could not load generated video"}. Rebuilding video automatically.`,
   };
 };
 
