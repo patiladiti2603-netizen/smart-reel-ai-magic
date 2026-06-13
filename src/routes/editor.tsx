@@ -1957,7 +1957,7 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
   const { blob: mp4Blob, checks: muxChecks } = await transcodeRecordingToMp4(blob, song, finalDuration, plan.music.bpm_estimate || 110);
   smartReelLog("render output", { webmSize: blob.size, mp4Size: mp4Blob.size, muxChecks, finalDuration });
   if (mp4Blob.size < 2048) throw new Error("Export validation failed: MP4 muxing produced an empty file.");
-  const validation = await validateRenderedVideo(mp4Blob, true);
+  const validation = await validateRenderedVideo(mp4Blob, true, muxChecks);
   if (!validation.playable) throw new Error(validation.message);
   const url = URL.createObjectURL(mp4Blob);
   smartReelLog("media URL", { url, exists: Boolean(url), size: mp4Blob.size, type: mp4Blob.type, validation });
