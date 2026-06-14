@@ -551,6 +551,9 @@ const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean, muxChec
   const durationOk = loaded && Number.isFinite(video.duration) && video.duration > 0.25;
   const videoTrack = loaded && video.videoWidth > 0 && video.videoHeight > 0;
   const audioTrack = expectedAudio ? Boolean(muxChecks?.audioStream) : true;
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
   URL.revokeObjectURL(url);
   const playable = Boolean(mp4Valid && videoTrack && durationOk);
   const issues = [
@@ -1982,10 +1985,12 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
 
 const downloadRenderedReel = (rendered: RenderedReel) => {
   if (typeof window === "undefined") return;
+  const url = URL.createObjectURL(rendered.blob);
   const link = window.document.createElement("a");
-  link.href = rendered.url;
+  link.href = url;
   link.download = rendered.fileName;
   link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
 };
 
 /* ---------- Preview screen with sequential clip player ---------- */
