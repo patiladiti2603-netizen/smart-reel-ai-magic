@@ -353,13 +353,16 @@ const repairVideoWithFfmpeg = async (clip: LocalClip) => {
   const outputName = `smart-reel-repaired-${clip.id}.mp4`;
   await ffmpeg.writeFile(inputName, await fetchFile(clip.file));
   await ffmpeg.exec([
+    "-y",
     "-i", inputName,
     "-map", "0:v:0",
-    "-an",
+    "-map", "0:a:0?",
     "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=30",
     "-c:v", "libx264",
     "-preset", "veryfast",
     "-pix_fmt", "yuv420p",
+    "-c:a", "aac",
+    "-b:a", "160k",
     "-movflags", "+faststart",
     outputName,
   ]);
@@ -397,9 +400,11 @@ const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: 
       "-i", "render.webm",
       "-f", "lavfi",
       "-i", `sine=frequency=${beatFrequency}:duration=${Math.max(1, durationSec).toFixed(2)}:sample_rate=48000`,
+      "-t", Math.max(1, durationSec).toFixed(2),
       "-map", "0:v:0",
       "-map", "1:a:0",
       "-shortest",
+      "-avoid_negative_ts", "make_zero",
       "-r", "30",
       "-vf", "format=yuv420p,scale=trunc(iw/2)*2:trunc(ih/2)*2",
       "-c:v", "libx264",
@@ -407,6 +412,8 @@ const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: 
       "-pix_fmt", "yuv420p",
       "-c:a", "aac",
       "-b:a", "160k",
+      "-af", "aresample=async=1:first_pts=0,volume=0.95",
+      "-max_muxing_queue_size", "1024",
       "-movflags", "+faststart",
       outputName,
     ]);
@@ -422,9 +429,11 @@ const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: 
         "-i", "render.webm",
         "-stream_loop", "-1",
         "-i", songName,
+        "-t", Math.max(1, durationSec).toFixed(2),
         "-map", "0:v:0",
         "-map", "1:a:0",
         "-shortest",
+        "-avoid_negative_ts", "make_zero",
         "-r", "30",
         "-vf", "format=yuv420p,scale=trunc(iw/2)*2:trunc(ih/2)*2",
         "-c:v", "libx264",
@@ -432,6 +441,8 @@ const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: 
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "192k",
+        "-af", "aresample=async=1:first_pts=0,volume=0.95",
+        "-max_muxing_queue_size", "1024",
         "-movflags", "+faststart",
         outputName,
       ]);
@@ -540,6 +551,9 @@ const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean, muxChec
   const durationOk = loaded && Number.isFinite(video.duration) && video.duration > 0.25;
   const videoTrack = loaded && video.videoWidth > 0 && video.videoHeight > 0;
   const audioTrack = expectedAudio ? Boolean(muxChecks?.audioStream) : true;
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
   URL.revokeObjectURL(url);
   const playable = Boolean(mp4Valid && videoTrack && durationOk);
   const issues = [
@@ -1971,10 +1985,12 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
 
 const downloadRenderedReel = (rendered: RenderedReel) => {
   if (typeof window === "undefined") return;
+  const url = URL.createObjectURL(rendered.blob);
   const link = window.document.createElement("a");
-  link.href = rendered.url;
+  link.href = url;
   link.download = rendered.fileName;
   link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
 };
 
 /* ---------- Preview screen with sequential clip player ---------- */
