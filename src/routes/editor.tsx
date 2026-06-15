@@ -1936,13 +1936,58 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
   }
 
   const filter = colorGradeFilter(plan.style.color_grade);
+  const bpm = Math.max(70, Math.min(170, plan.music.bpm_estimate || 110));
+  const beatSec = 60 / bpm;
+  // Snap a desired duration (in sec) to the nearest musical bar of 2-4 beats, clamped to 2.5–4s for photos
+  const snapPhotoDuration = (desiredSec: number) => {
+    const target = Math.max(2.5, Math.min(4, desiredSec || 3));
+    const beats = Math.max(2, Math.round(target / beatSec));
+    const snapped = beats * beatSec;
+    return Math.max(2.5, Math.min(4, snapped));
+  };
+  // Crossfade buffer: snapshot prior frame to fade out over first ~280ms of new cut
+  const fadeCanvas = window.document.createElement("canvas");
+  fadeCanvas.width = width;
+  fadeCanvas.height = height;
+  const fadeCtx = fadeCanvas.getContext("2d");
+  let hasFade = false;
+  const CROSSFADE_MS = 320;
   let renderedSec = 0;
   let visibleFrameCount = 0;
   for (let i = 0; i < plan.timeline.length; i += 1) {
     const cut = plan.timeline[i];
     const clip = usableClips.find((c) => c.name === cut.clip_ref) ?? usableClips[i % Math.max(1, usableClips.length)];
-    const durationMs = Math.max(600, (cut.out_sec - cut.in_sec) * 1000);
-    onProgress(`Rendering cut ${i + 1}/${plan.timeline.length}`);
+    const rawSec = cut.out_sec - cut.in_sec;
+    const isImage = clip?.kind === "image";
+    const durationSec = isImage
+      ? snapPhotoDuration(rawSec)
+      : Math.max(1.4, Math.min(5, rawSec || 2));
+    const durationMs = durationSec * 1000;
+    const effectIdx = i; // unique cinematic motion per cut
+    onProgress(`Rendering cut ${i + 1}/${plan.timeline.length} · ${durationSec.toFixed(1)}s`);
+    const paintFrame = (media: CanvasImageSource | null, localProgress: number) => {
+      ctx.fillStyle = "#07050f";
+      ctx.fillRect(0, 0, width, height);
+      ctx.filter = filter;
+      if (media) {
+        drawMediaCoverMotion(ctx, media, width, height, localProgress, effectIdx);
+        visibleFrameCount += 1;
+      }
+      // Crossfade prior cut over the new one
+      if (hasFade && fadeCtx) {
+        const fadeProgress = Math.min(1, (localProgress * durationMs) / CROSSFADE_MS);
+        if (fadeProgress < 1) {
+          ctx.save();
+          ctx.filter = "none";
+          ctx.globalAlpha = 1 - fadeProgress;
+          ctx.drawImage(fadeCanvas, 0, 0, width, height);
+          ctx.restore();
+        } else {
+          hasFade = false;
+        }
+      }
+      drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
+    };
     if (clip?.kind === "video") {
       const poster = await loadPoster(clip);
       const video = window.document.createElement("video");
@@ -1955,28 +2000,16 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
       const start = window.performance.now();
       while (window.performance.now() - start < durationMs) {
         const localProgress = Math.min(1, (window.performance.now() - start) / durationMs);
-        ctx.fillStyle = "#07050f";
-        ctx.fillRect(0, 0, width, height);
-        ctx.filter = filter;
-        if (video.readyState >= 2 && video.videoWidth > 0) {
-          drawMediaCoverMotion(ctx, video, width, height, localProgress, i % 2 === 0 ? 1 : -1);
-          visibleFrameCount += 1;
-        } else if (poster) {
-          drawMediaCoverMotion(ctx, poster, width, height, localProgress, i % 2 === 0 ? 1 : -1);
-          visibleFrameCount += 1;
-        } else {
-          ctx.filter = "none";
-          const gradient = ctx.createLinearGradient(0, 0, width, height);
-          gradient.addColorStop(0, "#3b0f46");
-          gradient.addColorStop(1, "#0c2a54");
-          ctx.fillStyle = gradient;
-          ctx.fillRect(0, 0, width, height);
-          ctx.fillStyle = "rgba(255,255,255,0.82)";
-          ctx.font = "24px Inter, Arial, sans-serif";
-          ctx.fillText(clip.name.slice(0, 46), 48, height / 2);
-        }
-        drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
+        const ready = video.readyState >= 2 && video.videoWidth > 0;
+        paintFrame(ready ? video : poster, localProgress);
         await new Promise((resolve) => window.requestAnimationFrame(resolve));
+      }
+      // Snapshot last frame for crossfade into next cut
+      if (fadeCtx && (video.readyState >= 2 || poster)) {
+        fadeCtx.fillStyle = "#07050f";
+        fadeCtx.fillRect(0, 0, width, height);
+        fadeCtx.drawImage(canvas, 0, 0);
+        hasFade = true;
       }
       video.pause();
     } else if (clip) {
@@ -1986,15 +2019,14 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
       const start = window.performance.now();
       while (window.performance.now() - start < durationMs) {
         const localProgress = Math.min(1, (window.performance.now() - start) / durationMs);
-        ctx.fillStyle = "#07050f";
-        ctx.fillRect(0, 0, width, height);
-        ctx.filter = filter;
-        if (image.naturalWidth) {
-          drawMediaCoverMotion(ctx, image, width, height, localProgress, i % 2 === 0 ? 1 : -1);
-          visibleFrameCount += 1;
-        }
-        drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
+        paintFrame(image.naturalWidth ? image : null, localProgress);
         await new Promise((resolve) => window.requestAnimationFrame(resolve));
+      }
+      if (fadeCtx && image.naturalWidth) {
+        fadeCtx.fillStyle = "#07050f";
+        fadeCtx.fillRect(0, 0, width, height);
+        fadeCtx.drawImage(canvas, 0, 0);
+        hasFade = true;
       }
     }
     renderedSec += durationMs / 1000;
