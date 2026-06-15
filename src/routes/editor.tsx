@@ -577,12 +577,55 @@ const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean, muxChec
   };
 };
 
-const drawMediaCoverMotion = (ctx: CanvasRenderingContext2D, media: CanvasImageSource, width: number, height: number, progress: number, direction = 1) => {
+// Cinematic Ken Burns engine — varies per cut index (zoom-in / zoom-out / pan-L / pan-R / push-tilt / pull-tilt)
+const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+const drawMediaCoverMotion = (
+  ctx: CanvasRenderingContext2D,
+  media: CanvasImageSource,
+  width: number,
+  height: number,
+  progress: number,
+  direction = 1,
+) => {
+  const t = easeInOut(Math.max(0, Math.min(1, progress)));
+  const effect = ((direction % 6) + 6) % 6; // 0..5
+  let zoom = 1.06;
+  let panX = 0;
+  let panY = 0;
+  let rotate = 0;
+  switch (effect) {
+    case 0: // slow zoom in
+      zoom = 1.04 + t * 0.18;
+      panY = (t - 0.5) * height * 0.02;
+      break;
+    case 1: // slow zoom out
+      zoom = 1.22 - t * 0.18;
+      panY = (0.5 - t) * height * 0.02;
+      break;
+    case 2: // pan left → right with light push
+      zoom = 1.14 + t * 0.04;
+      panX = (t - 0.5) * width * 0.18;
+      break;
+    case 3: // pan right → left with light push
+      zoom = 1.14 + t * 0.04;
+      panX = (0.5 - t) * width * 0.18;
+      break;
+    case 4: // diagonal push + slight tilt (cinematic dolly)
+      zoom = 1.08 + t * 0.16;
+      panX = (t - 0.5) * width * 0.08;
+      panY = (t - 0.5) * height * 0.08;
+      rotate = (t - 0.5) * 0.012;
+      break;
+    case 5: // pull + tilt (cinematic reveal)
+      zoom = 1.24 - t * 0.18;
+      panX = (0.5 - t) * width * 0.06;
+      panY = Math.sin(t * Math.PI) * height * 0.03;
+      rotate = (0.5 - t) * 0.012;
+      break;
+  }
   ctx.save();
-  const zoom = 1.04 + progress * 0.08;
-  const panX = (progress - 0.5) * width * 0.08 * direction;
-  const panY = Math.sin(progress * Math.PI) * height * 0.025;
   ctx.translate(width / 2 + panX, height / 2 + panY);
+  if (rotate) ctx.rotate(rotate);
   ctx.scale(zoom, zoom);
   ctx.translate(-width / 2, -height / 2);
   drawMediaCover(ctx, media, width, height);
