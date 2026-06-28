@@ -464,6 +464,22 @@ const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: 
     details,
   };
   smartReelLog("audio output", { song: song?.name || "AI audible beat bed", checks });
+  if (!checks.audioStream) {
+    // Retry audio mux once with the guaranteed-audible synthetic bed.
+    smartReelLog("audio output", { warning: "Audio stream missing in MP4; retrying with synthetic bed" });
+    await ffmpeg.deleteFile(outputName).catch(() => undefined);
+    try {
+      await runSyntheticAudioMux();
+      ffmpegLogs.length = 0;
+      await ffmpeg.exec(["-i", outputName]).catch(() => undefined);
+      const retryLogs = ffmpegLogs.slice(-80).join("\n");
+      checks.videoStream = /Stream #\d+:\d+[^\n]*Video:/i.test(retryLogs);
+      checks.audioStream = /Stream #\d+:\d+[^\n]*Audio:/i.test(retryLogs);
+      checks.details = ffmpegLogs.slice(-80);
+    } catch (err) {
+      smartReelLog("audio output", { error: "Synthetic audio retry failed", detail: err instanceof Error ? err.message : String(err) });
+    }
+  }
   if (!checks.videoStream || !checks.audioStream) {
     await ffmpeg.deleteFile("render.webm").catch(() => undefined);
     await ffmpeg.deleteFile(outputName).catch(() => undefined);
