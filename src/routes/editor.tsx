@@ -577,7 +577,7 @@ const validateRenderedVideo = async (blob: Blob, expectedAudio: boolean, muxChec
   };
 };
 
-// Cinematic Ken Burns engine — varies per cut index (zoom-in / zoom-out / pan-L / pan-R / push-tilt / pull-tilt)
+// Cinematic motion engine — 12 dynamic motion presets, never static
 const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 const drawMediaCoverMotion = (
   ctx: CanvasRenderingContext2D,
@@ -586,42 +586,47 @@ const drawMediaCoverMotion = (
   height: number,
   progress: number,
   direction = 1,
+  punch = 0, // 0..1 extra bass-drop zoom-punch + shake intensity
 ) => {
   const t = easeInOut(Math.max(0, Math.min(1, progress)));
-  const effect = ((direction % 6) + 6) % 6; // 0..5
-  let zoom = 1.06;
+  const effect = ((direction % 12) + 12) % 12; // 0..11
+  let zoom = 1.08;
   let panX = 0;
   let panY = 0;
   let rotate = 0;
   switch (effect) {
-    case 0: // slow zoom in
-      zoom = 1.04 + t * 0.18;
-      panY = (t - 0.5) * height * 0.02;
-      break;
-    case 1: // slow zoom out
-      zoom = 1.22 - t * 0.18;
-      panY = (0.5 - t) * height * 0.02;
-      break;
-    case 2: // pan left → right with light push
-      zoom = 1.14 + t * 0.04;
-      panX = (t - 0.5) * width * 0.18;
-      break;
-    case 3: // pan right → left with light push
-      zoom = 1.14 + t * 0.04;
-      panX = (0.5 - t) * width * 0.18;
-      break;
-    case 4: // diagonal push + slight tilt (cinematic dolly)
-      zoom = 1.08 + t * 0.16;
-      panX = (t - 0.5) * width * 0.08;
-      panY = (t - 0.5) * height * 0.08;
-      rotate = (t - 0.5) * 0.012;
-      break;
-    case 5: // pull + tilt (cinematic reveal)
-      zoom = 1.24 - t * 0.18;
-      panX = (0.5 - t) * width * 0.06;
-      panY = Math.sin(t * Math.PI) * height * 0.03;
-      rotate = (0.5 - t) * 0.012;
-      break;
+    case 0: // zoom in
+      zoom = 1.05 + t * 0.20; break;
+    case 1: // zoom out
+      zoom = 1.25 - t * 0.20; break;
+    case 2: // push in (slight forward dolly)
+      zoom = 1.06 + t * 0.16; panY = (t - 0.5) * height * 0.03; break;
+    case 3: // pull out
+      zoom = 1.22 - t * 0.16; panY = (0.5 - t) * height * 0.03; break;
+    case 4: // pan left → right
+      zoom = 1.16; panX = (t - 0.5) * width * 0.20; break;
+    case 5: // pan right → left
+      zoom = 1.16; panX = (0.5 - t) * width * 0.20; break;
+    case 6: // diagonal pan ↘
+      zoom = 1.14; panX = (t - 0.5) * width * 0.14; panY = (t - 0.5) * height * 0.14; break;
+    case 7: // diagonal pan ↙
+      zoom = 1.14; panX = (0.5 - t) * width * 0.14; panY = (t - 0.5) * height * 0.14; break;
+    case 8: // orbit (small circular sweep)
+      zoom = 1.16; panX = Math.cos(t * Math.PI * 2) * width * 0.05; panY = Math.sin(t * Math.PI * 2) * height * 0.05; rotate = Math.sin(t * Math.PI) * 0.02; break;
+    case 9: // parallax (slow drift + slight tilt)
+      zoom = 1.12 + Math.sin(t * Math.PI) * 0.04; panX = (t - 0.5) * width * 0.10; rotate = (t - 0.5) * 0.008; break;
+    case 10: // dolly zoom (counter zoom + push)
+      zoom = 1.10 + Math.sin(t * Math.PI) * 0.12; panY = (t - 0.5) * height * 0.04; break;
+    case 11: // rotate 1–3° with light push
+      zoom = 1.10 + t * 0.10; rotate = (t - 0.5) * 0.052; break;
+  }
+  // Bass-drop punch: extra zoom + tiny camera shake at cut start
+  if (punch > 0) {
+    const decay = Math.max(0, 1 - t * 2.2); // strongest in first ~45%
+    zoom += punch * decay * 0.18;
+    const shake = punch * decay * width * 0.012;
+    panX += (Math.random() - 0.5) * shake;
+    panY += (Math.random() - 0.5) * shake;
   }
   ctx.save();
   ctx.translate(width / 2 + panX, height / 2 + panY);
@@ -1938,20 +1943,35 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
   const filter = colorGradeFilter(plan.style.color_grade);
   const bpm = Math.max(70, Math.min(170, plan.music.bpm_estimate || 110));
   const beatSec = 60 / bpm;
-  // Snap a desired duration (in sec) to the nearest musical bar of 2-4 beats, clamped to 2.5–4s for photos
-  const snapPhotoDuration = (desiredSec: number) => {
-    const target = Math.max(2.5, Math.min(4, desiredSec || 3));
-    const beats = Math.max(2, Math.round(target / beatSec));
-    const snapped = beats * beatSec;
-    return Math.max(2.5, Math.min(4, snapped));
+  const bassDrops = (plan.music.bass_drops ?? []).filter((n) => Number.isFinite(n));
+  // BPM-tiered cut duration: fast 0.35-0.8 · medium 0.8-1.2 · slow 1.2-2.0 (photos)
+  // Snap to nearest half-beat to stay musical, and vary so no two consecutive cuts are equal.
+  const photoTier: [number, number] =
+    bpm >= 125 ? [0.35, 0.8] : bpm >= 95 ? [0.8, 1.2] : [1.2, 2.0];
+  const videoTier: [number, number] =
+    bpm >= 125 ? [0.5, 1.1] : bpm >= 95 ? [1.0, 1.8] : [1.5, 2.6];
+  let lastPhotoDur = 0;
+  let lastVideoDur = 0;
+  const snapToHalfBeat = (s: number) => Math.max(0.3, Math.round(s / (beatSec / 2)) * (beatSec / 2));
+  const pickDuration = (range: [number, number], last: number, seed: number) => {
+    const [lo, hi] = range;
+    const rand = ((Math.sin(seed * 12.9898) * 43758.5453) % 1 + 1) % 1; // deterministic per-cut
+    let v = snapToHalfBeat(lo + rand * (hi - lo));
+    if (Math.abs(v - last) < beatSec / 2) v = snapToHalfBeat(v + beatSec / 2);
+    return Math.max(lo, Math.min(hi + 0.4, v));
   };
-  // Crossfade buffer: snapshot prior frame to fade out over first ~280ms of new cut
+  // Non-repeating motion + transition picker
+  const motionCount = 12;
+  let lastMotion = -1;
+  let lastTransition = "";
+  const TRANSITIONS = ["whip", "motion-blur", "flash", "push", "spin", "zoom", "glitch", "shake", "blur", "light-leak", "film-burn"];
+  // Crossfade buffer
   const fadeCanvas = window.document.createElement("canvas");
   fadeCanvas.width = width;
   fadeCanvas.height = height;
   const fadeCtx = fadeCanvas.getContext("2d");
   let hasFade = false;
-  const CROSSFADE_MS = 320;
+  const CROSSFADE_MS = 280;
   let renderedSec = 0;
   let visibleFrameCount = 0;
   for (let i = 0; i < plan.timeline.length; i += 1) {
@@ -1960,17 +1980,29 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
     const rawSec = cut.out_sec - cut.in_sec;
     const isImage = clip?.kind === "image";
     const durationSec = isImage
-      ? snapPhotoDuration(rawSec)
-      : Math.max(1.4, Math.min(5, rawSec || 2));
+      ? pickDuration(photoTier, lastPhotoDur, i + 1)
+      : pickDuration(videoTier, lastVideoDur, i + 7);
+    if (isImage) lastPhotoDur = durationSec; else lastVideoDur = durationSec;
     const durationMs = durationSec * 1000;
-    const effectIdx = i; // unique cinematic motion per cut
-    onProgress(`Rendering cut ${i + 1}/${plan.timeline.length} · ${durationSec.toFixed(1)}s`);
+    // Pick a non-repeating motion preset
+    let effectIdx = (i * 5 + Math.floor(Math.random() * motionCount)) % motionCount;
+    if (effectIdx === lastMotion) effectIdx = (effectIdx + 1) % motionCount;
+    lastMotion = effectIdx;
+    // Avoid consecutive identical transitions
+    let transitionLabel = cut.transition_in || TRANSITIONS[i % TRANSITIONS.length];
+    if (transitionLabel === lastTransition) transitionLabel = TRANSITIONS[(i + 3) % TRANSITIONS.length];
+    lastTransition = transitionLabel;
+    // Bass-drop emphasis when this cut starts within 0.25s of a drop
+    const cutStart = renderedSec;
+    const onBassDrop = bassDrops.some((d) => Math.abs(d - cutStart) < 0.28);
+    const punchIntensity = onBassDrop ? 1 : 0;
+    onProgress(`Rendering cut ${i + 1}/${plan.timeline.length} · ${durationSec.toFixed(2)}s${onBassDrop ? " · BASS DROP" : ""}`);
     const paintFrame = (media: CanvasImageSource | null, localProgress: number) => {
       ctx.fillStyle = "#07050f";
       ctx.fillRect(0, 0, width, height);
       ctx.filter = filter;
       if (media) {
-        drawMediaCoverMotion(ctx, media, width, height, localProgress, effectIdx);
+        drawMediaCoverMotion(ctx, media, width, height, localProgress, effectIdx, punchIntensity);
         visibleFrameCount += 1;
       }
       // Crossfade prior cut over the new one
@@ -1986,7 +2018,19 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
           hasFade = false;
         }
       }
-      drawOverlays(cut.transition_in || cut.effect, cut.caption ?? null, filter);
+      // Bass-drop white flash (first ~120ms of the cut)
+      if (punchIntensity > 0) {
+        const flashMs = 140;
+        const flashAlpha = Math.max(0, 1 - (localProgress * durationMs) / flashMs) * 0.55;
+        if (flashAlpha > 0.01) {
+          ctx.save();
+          ctx.filter = "none";
+          ctx.fillStyle = `rgba(255,255,255,${flashAlpha.toFixed(3)})`;
+          ctx.fillRect(0, 0, width, height);
+          ctx.restore();
+        }
+      }
+      drawOverlays(transitionLabel, cut.caption ?? null, filter);
     };
     if (clip?.kind === "video") {
       const poster = await loadPoster(clip);
@@ -2004,7 +2048,6 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
         paintFrame(ready ? video : poster, localProgress);
         await new Promise((resolve) => window.requestAnimationFrame(resolve));
       }
-      // Snapshot last frame for crossfade into next cut
       if (fadeCtx && (video.readyState >= 2 || poster)) {
         fadeCtx.fillStyle = "#07050f";
         fadeCtx.fillRect(0, 0, width, height);
@@ -2032,6 +2075,7 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
     renderedSec += durationMs / 1000;
     if (renderedSec > Math.max(45, plan.project.target_duration_sec + 4)) break;
   }
+
 
   if (visibleFrameCount === 0) throw new Error("Video rendering issue detected. Rebuilding cinematic timeline…");
 
