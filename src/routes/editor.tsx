@@ -464,6 +464,22 @@ const transcodeRecordingToMp4 = async (blob: Blob, song: SongFile, durationSec: 
     details,
   };
   smartReelLog("audio output", { song: song?.name || "AI audible beat bed", checks });
+  if (!checks.audioStream) {
+    // Retry audio mux once with the guaranteed-audible synthetic bed.
+    smartReelLog("audio output", { warning: "Audio stream missing in MP4; retrying with synthetic bed" });
+    await ffmpeg.deleteFile(outputName).catch(() => undefined);
+    try {
+      await runSyntheticAudioMux();
+      ffmpegLogs.length = 0;
+      await ffmpeg.exec(["-i", outputName]).catch(() => undefined);
+      const retryLogs = ffmpegLogs.slice(-80).join("\n");
+      checks.videoStream = /Stream #\d+:\d+[^\n]*Video:/i.test(retryLogs);
+      checks.audioStream = /Stream #\d+:\d+[^\n]*Audio:/i.test(retryLogs);
+      checks.details = ffmpegLogs.slice(-80);
+    } catch (err) {
+      smartReelLog("audio output", { error: "Synthetic audio retry failed", detail: err instanceof Error ? err.message : String(err) });
+    }
+  }
   if (!checks.videoStream || !checks.audioStream) {
     await ffmpeg.deleteFile("render.webm").catch(() => undefined);
     await ffmpeg.deleteFile(outputName).catch(() => undefined);
@@ -2032,44 +2048,73 @@ async function renderPreviewReel(plan: EditPlan, clips: LocalClip[], song: SongF
       }
       drawOverlays(transitionLabel, cut.caption ?? null, filter);
     };
-    if (clip?.kind === "video") {
-      const poster = await loadPoster(clip);
-      const video = window.document.createElement("video");
-      video.src = clip.url;
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = "auto";
-      await prepareVideoFrame(video, cut.in_sec).catch(() => undefined);
-      await video.play().catch(() => undefined);
+    // Per-cut safety: never let one broken clip/image/effect abort the whole render.
+    // Fallback priority: basic cut → crossfade → zoom → no transition (still paint frames).
+    try {
+      if (clip?.kind === "video") {
+        const poster = await loadPoster(clip).catch(() => null);
+        const video = window.document.createElement("video");
+        video.src = clip.url;
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = "auto";
+        // Watchdog: never wait on one clip forever.
+        await Promise.race([
+          prepareVideoFrame(video, cut.in_sec).catch(() => undefined),
+          new Promise((resolve) => window.setTimeout(resolve, 1500)),
+        ]);
+        await video.play().catch(() => undefined);
+        const start = window.performance.now();
+        while (window.performance.now() - start < durationMs) {
+          const localProgress = Math.min(1, (window.performance.now() - start) / durationMs);
+          const ready = video.readyState >= 2 && video.videoWidth > 0;
+          try {
+            paintFrame(ready ? video : poster, localProgress);
+          } catch {
+            // Effect failed — fall back to a basic cut frame.
+            try { paintFrame(poster, localProgress); } catch {}
+          }
+          await new Promise((resolve) => window.requestAnimationFrame(resolve));
+        }
+        if (fadeCtx && (video.readyState >= 2 || poster)) {
+          fadeCtx.fillStyle = "#07050f";
+          fadeCtx.fillRect(0, 0, width, height);
+          fadeCtx.drawImage(canvas, 0, 0);
+          hasFade = true;
+        }
+        try { video.pause(); } catch {}
+        try { video.removeAttribute("src"); video.load(); } catch {}
+      } else if (clip) {
+        const image = new Image();
+        image.src = clip.thumbnailUrl || clip.url;
+        await Promise.race([
+          image.decode().catch(() => undefined),
+          new Promise((resolve) => window.setTimeout(resolve, 1500)),
+        ]);
+        const start = window.performance.now();
+        while (window.performance.now() - start < durationMs) {
+          const localProgress = Math.min(1, (window.performance.now() - start) / durationMs);
+          try {
+            paintFrame(image.naturalWidth ? image : null, localProgress);
+          } catch {
+            try { paintFrame(null, localProgress); } catch {}
+          }
+          await new Promise((resolve) => window.requestAnimationFrame(resolve));
+        }
+        if (fadeCtx && image.naturalWidth) {
+          fadeCtx.fillStyle = "#07050f";
+          fadeCtx.fillRect(0, 0, width, height);
+          fadeCtx.drawImage(canvas, 0, 0);
+          hasFade = true;
+        }
+      }
+    } catch (err) {
+      // Skip the broken cut — keep timeline moving, keep audio in sync.
+      smartReelLog("render output", { warning: "Cut skipped due to clip error", index: i, error: err instanceof Error ? err.message : String(err) });
       const start = window.performance.now();
-      while (window.performance.now() - start < durationMs) {
-        const localProgress = Math.min(1, (window.performance.now() - start) / durationMs);
-        const ready = video.readyState >= 2 && video.videoWidth > 0;
-        paintFrame(ready ? video : poster, localProgress);
+      while (window.performance.now() - start < Math.min(durationMs, 600)) {
+        try { paintFrame(null, Math.min(1, (window.performance.now() - start) / durationMs)); } catch {}
         await new Promise((resolve) => window.requestAnimationFrame(resolve));
-      }
-      if (fadeCtx && (video.readyState >= 2 || poster)) {
-        fadeCtx.fillStyle = "#07050f";
-        fadeCtx.fillRect(0, 0, width, height);
-        fadeCtx.drawImage(canvas, 0, 0);
-        hasFade = true;
-      }
-      video.pause();
-    } else if (clip) {
-      const image = new Image();
-      image.src = clip.thumbnailUrl || clip.url;
-      await image.decode().catch(() => undefined);
-      const start = window.performance.now();
-      while (window.performance.now() - start < durationMs) {
-        const localProgress = Math.min(1, (window.performance.now() - start) / durationMs);
-        paintFrame(image.naturalWidth ? image : null, localProgress);
-        await new Promise((resolve) => window.requestAnimationFrame(resolve));
-      }
-      if (fadeCtx && image.naturalWidth) {
-        fadeCtx.fillStyle = "#07050f";
-        fadeCtx.fillRect(0, 0, width, height);
-        fadeCtx.drawImage(canvas, 0, 0);
-        hasFade = true;
       }
     }
     renderedSec += durationMs / 1000;
